@@ -202,7 +202,7 @@ app.get('/admin/verify', (req, res) => {
 // ── ADMIN DATA ───────────────────────────────────────────────────────────────
 
 app.get('/admin/data', async (req, res) => {
-  // Allow fetching specific keys without auth (for login)
+  // Allow fetching admin_users without auth (needed for client login)
   const key = req.query.key;
   if (key === 'admin_users') {
     try {
@@ -213,9 +213,12 @@ app.get('/admin/data', async (req, res) => {
       return res.status(500).json({ error: e.message });
     }
   }
-  // Full data requires admin auth
+  // Full data - accept admin token OR API key
   const token = req.headers['x-admin-token'];
-  if (!token || !sessions.get(token) || Date.now() > sessions.get(token).expires) {
+  const apiKey = req.headers['x-api-key'];
+  const validToken = token && sessions.get(token) && Date.now() < sessions.get(token).expires;
+  const validKey = apiKey && apiKey === API_KEY;
+  if (!validToken && !validKey) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
