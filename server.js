@@ -517,4 +517,15 @@ app.post('/request-access', requireKey, async (req, res) => {
   }
 });
 
-
+// ── START ─────────────────────────────────────────────────────────────────────
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log('Database ready');
+      console.log('TechLearn API running on port ' + PORT);
+    });
+  })
+  .catch(err => {
+    console.error('Failed to initialize database:', err);
+    process.exit(1);
+  });
