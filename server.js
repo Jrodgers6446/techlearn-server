@@ -247,7 +247,7 @@ app.post('/result', requireKey, async (req, res) => {
 });
 
 // ── PROGRESS ──────────────────────────────────────────────────────────────────
-app.get('/progress', requireKey, async (req, res) => {
+app.get('/progress', requireKeyOrAdmin, async (req, res) => {
   try {
     const summary = await pool.query(`
       SELECT username, full_name,
@@ -271,7 +271,7 @@ app.get('/progress', requireKey, async (req, res) => {
   }
 });
 
-app.get('/progress/:username', requireKey, async (req, res) => {
+app.get('/progress/:username', requireKeyOrAdmin, async (req, res) => {
   try {
     const rows = await pool.query(
       'SELECT * FROM results WHERE username = $1 ORDER BY created_at DESC',
