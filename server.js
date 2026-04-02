@@ -64,6 +64,32 @@ async function initDb() {
     )
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_requests (
+      id           SERIAL PRIMARY KEY,
+      full_name    TEXT        NOT NULL,
+      store        TEXT        NOT NULL,
+      email        TEXT        NOT NULL,
+      username     TEXT        NOT NULL,
+      password     TEXT        NOT NULL,
+      status       TEXT        NOT NULL DEFAULT 'pending',
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_requests (
+      id                SERIAL PRIMARY KEY,
+      full_name         TEXT        NOT NULL,
+      store             TEXT        NOT NULL,
+      email             TEXT        NOT NULL,
+      requested_username TEXT       NOT NULL,
+      requested_password TEXT       NOT NULL,
+      status            TEXT        NOT NULL DEFAULT 'pending',
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS requests (
       id         SERIAL PRIMARY KEY,
       type       TEXT        NOT NULL,
@@ -371,6 +397,181 @@ app.post('/guidebook', requireKey, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
+app.post('/account-request', async (req, res) => {
+  const { fullName, store, email, requestedUsername, requestedPassword } = req.body;
+  if (!fullName || !store || !email || !requestedUsername || !requestedPassword) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+  try {
+    // Check username not already taken
+    const existing = await pool.query(
+      "SELECT value FROM admin_data WHERE key = 'admin_users'"
+    );
+    if (existing.rows.length) {
+      const existingUsers = JSON.parse(existing.rows[0].value);
+      if (existingUsers.find(u => u.username === requestedUsername.toLowerCase())) {
+        return res.status(400).json({ error: 'Username already taken' });
+      }
+    }
+    await pool.query(
+      'INSERT INTO account_requests (full_name, store, email, requested_username, requested_password) VALUES ($1, $2, $3, $4, $5)',
+      [fullName, store, email, requestedUsername.toLowerCase(), requestedPassword]
+    );
+
+    // Notify admins via email
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+    const notifyEmails = process.env.NOTIFY_EMAILS || '';
+    if (gmailUser && gmailPass && notifyEmails) {
+      const recipients = notifyEmails.split(',').map(e => e.trim()).filter(Boolean);
+      res.json({ ok: true });
+      try {
+        let nm;
+        try { nm = require('nodemailer'); } catch(e) { return; }
+        const transporter = nm.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: false,
+          auth: { user: gmailUser, pass: gmailPass },
+          tls: { rejectUnauthorized: false }
+        });
+        await transporter.sendMail({
+          from: '"TechLearn" <' + gmailUser + '>',
+          to: recipients.join(', '),
+          subject: 'New Account Request from ' + fullName,
+          html: '<div style="font-family:sans-serif;max-width:600px;padding:24px">'
+            + '<h2>New Account Request</h2>'
+            + '<p><strong>Name:</strong> ' + fullName + '</p>'
+            + '<p><strong>Store:</strong> ' + store + '</p>'
+            + '<p><strong>Email:</strong> ' + email + '</p>'
+            + '<p><strong>Requested Username:</strong> ' + requestedUsername + '</p>'
+            + '<p><strong>Requested Password:</strong> ' + requestedPassword + '</p>'
+            + '<p>Log in to the admin panel to approve or deny this request.</p>'
+            + '</div>'
+        });
+      } catch(e) { console.error('Email error:', e.message); }
+    } else {
+      res.json({ ok: true });
+    }
+  } catch(e) {
+    console.error('Account request error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/account-requests', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const rows = await pool.query('SELECT * FROM account_requests ORDER BY created_at DESC');
+    res.json(rows.rows);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/account-requests/:id/approve', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT * FROM account_requests WHERE id = $1', [req.params.id]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = row.rows[0];
+
+    // Add user to admin_users
+    const existing = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
+    let users = existing.rows.length ? JSON.parse(existing.rows[0].value) : [];
+    users.push({ id: Date.now(), name: r.full_name, username: r.requested_username, password: r.requested_password });
+    await pool.query(
+      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+      [JSON.stringify(users)]
+    );
+
+    // Update status
+    await pool.query("UPDATE account_requests SET status = 'approved' WHERE id = $1", [req.params.id]);
+
+    // Send approval email
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+    res.json({ ok: true });
+    if (gmailUser && gmailPass && r.email) {
+      try {
+        let nm;
+        try { nm = require('nodemailer'); } catch(e) { return; }
+        const transporter = nm.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: false,
+          auth: { user: gmailUser, pass: gmailPass },
+          tls: { rejectUnauthorized: false }
+        });
+        await transporter.sendMail({
+          from: '"TechLearn" <' + gmailUser + '>',
+          to: r.email,
+          subject: 'Your TechLearn Account Has Been Approved',
+          html: '<div style="font-family:sans-serif;max-width:600px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px">'
+            + '<h2 style="color:#8b5cf6">Account Approved!</h2>'
+            + '<p>Hi ' + r.full_name + ', your TechLearn account has been approved.</p>'
+            + '<p><strong>Username:</strong> ' + r.requested_username + '</p>'
+            + '<p><strong>Password:</strong> ' + r.requested_password + '</p>'
+            + '<p>Visit <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> to log in.</p>'
+            + '<p style="font-size:11px;color:#7c7d8a;margin-top:24px">TechLearn &mdash; Lupaservices LLC</p>'
+            + '</div>'
+        });
+      } catch(e) { console.error('Approval email error:', e.message); }
+    }
+  } catch(e) {
+    console.error('Approve error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/account-requests/:id/deny', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT * FROM account_requests WHERE id = $1', [req.params.id]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = row.rows[0];
+    await pool.query("UPDATE account_requests SET status = 'denied' WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+
+    // Send denial email
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+    if (gmailUser && gmailPass && r.email) {
+      try {
+        let nm;
+        try { nm = require('nodemailer'); } catch(e) { return; }
+        const transporter = nm.createTransport({
+          host: process.env.SMTP_HOST || 'smtp.gmail.com',
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: false,
+          auth: { user: gmailUser, pass: gmailPass },
+          tls: { rejectUnauthorized: false }
+        });
+        await transporter.sendMail({
+          from: '"TechLearn" <' + gmailUser + '>',
+          to: r.email,
+          subject: 'Your TechLearn Account Request',
+          html: '<div style="font-family:sans-serif;max-width:600px;padding:24px">'
+            + '<h2>Account Request Update</h2>'
+            + '<p>Hi ' + r.full_name + ', unfortunately your account request was not approved at this time.</p>'
+            + '<p>Please contact your manager for more information.</p>'
+            + '<p style="font-size:11px;color:#999;margin-top:24px">TechLearn &mdash; Lupaservices LLC</p>'
+            + '</div>'
+        });
+      } catch(e) { console.error('Denial email error:', e.message); }
+    }
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/account-requests/:id', requireKeyOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM account_requests WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── CHANGELOG ────────────────────────────────────────────────────────────────
 // ── LEGAL PAGE ───────────────────────────────────────────────────────────────
 app.get('/legal', async (req, res) => {
@@ -413,6 +614,158 @@ app.delete('/changelog/:id', requireKeyOrAdmin, async (req, res) => {
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
+app.post('/account-request', async (req, res) => {
+  const { fullName, store, email, username, password } = req.body;
+  if (!fullName || !store || !email || !username || !password) {
+    return res.status(400).json({ error: 'All fields are required' });
+  }
+  try {
+    // Check if username already exists in admin_data
+    const existing = await pool.query(
+      "SELECT value FROM admin_data WHERE key = 'admin_users'"
+    );
+    if (existing.rows.length) {
+      const users = JSON.parse(existing.rows[0].value);
+      if (users.find(u => u.username === username.toLowerCase())) {
+        return res.status(400).json({ error: 'Username already taken' });
+      }
+    }
+    await pool.query(
+      'INSERT INTO account_requests (full_name, store, email, username, password) VALUES ($1,$2,$3,$4,$5)',
+      [fullName, store, email, username.toLowerCase(), password]
+    );
+
+    // Notify admins by email
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+    const notifyEmails = process.env.NOTIFY_EMAILS || gmailUser;
+    if (gmailUser && gmailPass && notifyEmails) {
+      const recipients = notifyEmails.split(',').map(e => e.trim()).filter(Boolean);
+      setImmediate(async () => {
+        try {
+          let nm; try { nm = require('nodemailer'); } catch(e) { return; }
+          const t = nm.createTransport({ host: process.env.SMTP_HOST||'smtp.gmail.com', port: parseInt(process.env.SMTP_PORT||'587'), secure: false, auth: { user: gmailUser, pass: gmailPass }, tls: { rejectUnauthorized: false } });
+          await t.sendMail({
+            from: '"TechLearn" <' + gmailUser + '>',
+            to: recipients.join(', '),
+            subject: 'TechLearn Account Request from ' + fullName,
+            html: '<div style="font-family:sans-serif;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px;max-width:600px">'
+              + '<h2 style="margin:0 0 16px">New Account Request</h2>'
+              + '<p><strong>Name:</strong> ' + fullName + '</p>'
+              + '<p><strong>Store:</strong> ' + store + '</p>'
+              + '<p><strong>Email:</strong> ' + email + '</p>'
+              + '<p><strong>Username:</strong> ' + username + '</p>'
+              + '<p><strong>Password:</strong> ' + password + '</p>'
+              + '<p style="margin-top:16px;color:#7c7d8a;font-size:12px">Log in to the admin panel to approve or deny this request.</p>'
+              + '</div>'
+          });
+        } catch(e) { console.error('Account request email error:', e.message); }
+      });
+    }
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/account-requests', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const rows = await pool.query('SELECT * FROM account_requests ORDER BY created_at DESC');
+    res.json(rows.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/account-requests/:id/approve', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT * FROM account_requests WHERE id=$1', [req.params.id]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = row.rows[0];
+
+    // Add user to admin_users
+    const existing = await pool.query("SELECT value FROM admin_data WHERE key='admin_users'");
+    const users = existing.rows.length ? JSON.parse(existing.rows[0].value) : [];
+    users.push({ id: Date.now(), name: r.full_name, username: r.username, password: r.password });
+    await pool.query(
+      "INSERT INTO admin_data (key,value) VALUES ('admin_users',$1) ON CONFLICT(key) DO UPDATE SET value=$1",
+      [JSON.stringify(users)]
+    );
+
+    // Update status
+    await pool.query("UPDATE account_requests SET status='approved' WHERE id=$1", [req.params.id]);
+
+    // Send approval email to user
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+    const appUrl = process.env.APP_URL || '';
+    if (gmailUser && gmailPass && r.email) {
+      setImmediate(async () => {
+        try {
+          let nm; try { nm = require('nodemailer'); } catch(e) { return; }
+          const t = nm.createTransport({ host: process.env.SMTP_HOST||'smtp.gmail.com', port: parseInt(process.env.SMTP_PORT||'587'), secure: false, auth: { user: gmailUser, pass: gmailPass }, tls: { rejectUnauthorized: false } });
+          await t.sendMail({
+            from: '"TechLearn" <' + gmailUser + '>',
+            to: r.email,
+            subject: 'Your TechLearn Account is Approved!',
+            html: '<div style="font-family:sans-serif;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px;max-width:600px">'
+              + '<div style="background:linear-gradient(135deg,#8b5cf6,#22d3ee);padding:3px;border-radius:10px;margin-bottom:24px"><div style="background:#13141c;border-radius:8px;padding:20px">'
+              + '<h2 style="margin:0">Your account has been approved!</h2></div></div>'
+              + '<p>Hi <strong>' + r.full_name + '</strong>, your TechLearn training account is ready.</p>'
+              + '<div style="background:#1a1b26;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:16px;margin:16px 0">'
+              + '<p style="margin:0 0 8px"><strong>Username:</strong> ' + r.username + '</p>'
+              + '<p style="margin:0 0 8px"><strong>Password:</strong> ' + r.password + '</p>'
+              + (appUrl ? '<p style="margin:8px 0 0"><strong>Login at:</strong> <a href="' + appUrl + '" style="color:#a78bfa">' + appUrl + '</a></p>' : '')
+              + '</div>'
+              + '<p style="color:#7c7d8a;font-size:12px">Sent via TechLearn &mdash; Lupaservices LLC</p>'
+              + '</div>'
+          });
+        } catch(e) { console.error('Approval email error:', e.message); }
+      });
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/account-requests/:id/deny', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const row = await pool.query('SELECT * FROM account_requests WHERE id=$1', [req.params.id]);
+    if (!row.rows.length) return res.status(404).json({ error: 'Not found' });
+    const r = row.rows[0];
+    await pool.query("UPDATE account_requests SET status='denied' WHERE id=$1", [req.params.id]);
+
+    // Send denial email
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS;
+    if (gmailUser && gmailPass && r.email) {
+      setImmediate(async () => {
+        try {
+          let nm; try { nm = require('nodemailer'); } catch(e) { return; }
+          const t = nm.createTransport({ host: process.env.SMTP_HOST||'smtp.gmail.com', port: parseInt(process.env.SMTP_PORT||'587'), secure: false, auth: { user: gmailUser, pass: gmailPass }, tls: { rejectUnauthorized: false } });
+          await t.sendMail({
+            from: '"TechLearn" <' + gmailUser + '>',
+            to: r.email,
+            subject: 'TechLearn Account Request Update',
+            html: '<div style="font-family:sans-serif;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px;max-width:600px">'
+              + '<h2 style="margin:0 0 16px">Account Request Update</h2>'
+              + '<p>Hi <strong>' + r.full_name + '</strong>, unfortunately your account request was not approved at this time.</p>'
+              + '<p style="color:#7c7d8a">Please contact your manager for more information.</p>'
+              + '<p style="color:#7c7d8a;font-size:12px;margin-top:24px">Sent via TechLearn &mdash; Lupaservices LLC</p>'
+              + '</div>'
+          });
+        } catch(e) { console.error('Denial email error:', e.message); }
+      });
+    }
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/account-requests/:id', requireKeyOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM account_requests WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── REQUESTS ─────────────────────────────────────────────────────────────────
