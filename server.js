@@ -482,11 +482,17 @@ app.post('/request-access', requireKey, async (req, res) => {
     '</div>'
   ].join('');
 
+  // Respond immediately — send email in background so request never times out
+  res.json({ ok: true });
+
   try {
     const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: { user: gmailUser, pass: gmailPass }
+      auth: { user: gmailUser, pass: gmailPass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
     });
     await transporter.sendMail({
       from: '"TechLearn" <' + gmailUser + '>',
@@ -494,20 +500,10 @@ app.post('/request-access', requireKey, async (req, res) => {
       subject: 'TechLearn ' + typeLabel + ' from ' + fullName,
       html: emailBody
     });
-    res.json({ ok: true });
+    console.log('Email sent for request from', fullName);
   } catch(e) {
     console.error('Email error:', e.message);
-    res.json({ ok: true, note: 'Saved but email failed: ' + e.message });
   }
-initDb()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  })
-  .catch(err => {
-    console.error('Failed to initialize database:', err);
-    process.exit(1);
-  });
+});
 
 
