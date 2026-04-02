@@ -498,12 +498,18 @@ app.post('/request-access', requireKey, async (req, res) => {
   try {
     let nm;
     try { nm = require('nodemailer'); } catch(e) { console.warn('nodemailer not available:', e.message); return; }
+    // Support both Gmail and custom domain SMTP
+    const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
+    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
     const transporter = nm.createTransport({
-      service: 'gmail',
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpPort === 465,
       auth: { user: gmailUser, pass: gmailPass },
       connectionTimeout: 10000,
       greetingTimeout: 10000,
-      socketTimeout: 15000
+      socketTimeout: 15000,
+      tls: { rejectUnauthorized: false }
     });
     await transporter.sendMail({
       from: '"TechLearn" <' + gmailUser + '>',
