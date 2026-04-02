@@ -101,6 +101,18 @@ function requireKey(req, res, next) {
   next();
 }
 
+function requireKeyOrAdmin(req, res, next) {
+  const key   = req.headers['x-api-key'];
+  const token = req.headers['x-admin-token'];
+  if (key && key === API_KEY) return next();
+  if (token && sessions.has(token)) {
+    const session = sessions.get(token);
+    if (Date.now() - session.created < 8 * 60 * 60 * 1000) return next();
+    sessions.delete(token);
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+}
+
 // ── ADMIN LOGIN ───────────────────────────────────────────────────────────────
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
@@ -198,7 +210,7 @@ app.get('/', async (req, res) => {
   }
 });
 
-app.post('/deploy', requireKey, async (req, res) => {
+app.post('/deploy', requireKeyOrAdmin, async (req, res) => {
   const { html } = req.body;
   if (!html) return res.status(400).json({ error: 'No HTML provided' });
   try {
