@@ -1,7 +1,8 @@
-const express = require('express');
-const cors    = require('cors');
-const { Pool } = require('pg');
-const crypto  = require('crypto');
+const express    = require('express');
+const cors       = require('cors');
+const { Pool }   = require('pg');
+const crypto     = require('crypto');
+const nodemailer = require('nodemailer');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -486,7 +487,6 @@ app.post('/request-access', requireKey, async (req, res) => {
   res.json({ ok: true });
 
   try {
-    const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: gmailUser, pass: gmailPass },
