@@ -201,7 +201,23 @@ app.get('/admin/verify', (req, res) => {
 
 // ── ADMIN DATA ───────────────────────────────────────────────────────────────
 
-app.get('/admin/data', requireAdmin, async (req, res) => {
+app.get('/admin/data', async (req, res) => {
+  // Allow fetching specific keys without auth (for login)
+  const key = req.query.key;
+  if (key === 'admin_users') {
+    try {
+      const r = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
+      if (!r.rows.length) return res.json({ admin_users: [] });
+      return res.json({ admin_users: JSON.parse(r.rows[0].value) });
+    } catch(e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+  // Full data requires admin auth
+  const token = req.headers['x-admin-token'];
+  if (!token || !sessions.get(token) || Date.now() > sessions.get(token).expires) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
   try {
     const rows = await pool.query('SELECT key, value FROM admin_data');
     const result = {};
