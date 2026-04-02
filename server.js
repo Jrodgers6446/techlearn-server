@@ -344,54 +344,46 @@ app.post('/request-access', requireKey, async (req, res) => {
   const { username, fullName, message } = req.body;
   if (!username || !message) return res.status(400).json({ error: 'Missing fields' });
 
-  const resendKey = process.env.RESEND_API_KEY;
-  const notifyEmails = process.env.NOTIFY_EMAILS || '';
+  const gmailUser = process.env.GMAIL_USER;
+  const gmailPass = process.env.GMAIL_PASS;
+  const notifyEmails = process.env.NOTIFY_EMAILS || gmailUser;
 
-  if (!resendKey || !notifyEmails) {
+  if (!gmailUser || !gmailPass) {
     return res.status(500).json({ error: 'Email not configured on server' });
   }
 
   const recipients = notifyEmails.split(',').map(e => e.trim()).filter(Boolean);
 
   try {
-    const r = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + resendKey
-      },
-      body: JSON.stringify({
-        from: 'TechLearn <onboarding@resend.dev>',
-        to: recipients,
-        subject: 'TechLearn Access Request from ' + fullName,
-        html: [
-          '<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px">',
-          '<div style="background:linear-gradient(135deg,#8b5cf6,#22d3ee);padding:3px;border-radius:10px;margin-bottom:24px">',
-          '<div style="background:#13141c;border-radius:8px;padding:20px">',
-          '<h2 style="margin:0;font-size:20px">&#128274; Access Request</h2>',
-          '<p style="margin:4px 0 0;color:#7c7d8a;font-size:13px">TechLearn Training Platform</p>',
-          '</div></div>',
-          '<p style="font-size:14px;color:#7c7d8a;margin-bottom:8px">From</p>',
-          '<p style="font-size:16px;font-weight:600;margin:0 0 20px">' + fullName + ' <span style="color:#7c7d8a;font-weight:400;font-size:13px">(' + username + ')</span></p>',
-          '<p style="font-size:14px;color:#7c7d8a;margin-bottom:8px">Request</p>',
-          '<div style="background:#1a1b26;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:16px;font-size:14px;line-height:1.7;white-space:pre-wrap">' + message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>',
-          '<p style="font-size:11px;color:#7c7d8a;margin-top:24px;text-align:center">Sent via TechLearn &mdash; LupA Services</p>',
-          '</div>'
-        ].join('')
-      })
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: gmailUser, pass: gmailPass }
     });
 
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      throw new Error(err.message || 'Email send failed ' + r.status);
-    }
+    await transporter.sendMail({
+      from: '"TechLearn Notifications" <' + gmailUser + '>',
+      to: recipients.join(', '),
+      subject: 'TechLearn Access Request from ' + fullName,
+      html: [
+        '<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#f9f9f9;border-radius:12px">',
+        '<h2 style="color:#8b5cf6;margin-bottom:8px">&#128274; Access Request</h2>',
+        '<p style="color:#666;font-size:13px;margin-bottom:20px">TechLearn Training Platform</p>',
+        '<p><strong>From:</strong> ' + fullName + ' <span style="color:#888">(' + username + ')</span></p>',
+        '<p style="margin-top:16px"><strong>Request:</strong></p>',
+        '<div style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:14px;line-height:1.6">' + message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>',
+        '<p style="font-size:11px;color:#999;margin-top:20px;text-align:center">Sent via TechLearn &mdash; LupA Services</p>',
+        '</div>'
+      ].join('')
+    });
 
     res.json({ ok: true });
   } catch(e) {
-    console.error('Request access error:', e.message);
+    console.error('Email error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
+
 
 // ── START ─────────────────────────────────────────────────────────────────────
 initDb().then(() => {
