@@ -54,6 +54,18 @@ async function initDb() {
     )
   `);
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS requests (
+      id         SERIAL PRIMARY KEY,
+      type       TEXT        NOT NULL,
+      username   TEXT        NOT NULL,
+      full_name  TEXT        NOT NULL,
+      message    TEXT        NOT NULL,
+      status     TEXT        NOT NULL DEFAULT 'open',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS changelog (
       id         SERIAL PRIMARY KEY,
       version    TEXT        NOT NULL,
@@ -393,20 +405,82 @@ app.delete('/changelog/:id', requireKeyOrAdmin, async (req, res) => {
   }
 });
 
-// ── REQUEST ACCESS ───────────────────────────────────────────────────────────
+// ── REQUESTS ─────────────────────────────────────────────────────────────────
+app.get('/requests', requireKeyOrAdmin, async (req, res) => {
+  try {
+    const type = req.query.type;
+    const query = type
+      ? 'SELECT * FROM requests WHERE type = $1 ORDER BY created_at DESC'
+      : 'SELECT * FROM requests ORDER BY created_at DESC';
+    const params = type ? [type] : [];
+    const rows = await pool.query(query, params);
+    res.json(rows.rows);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/requests/:id', requireKeyOrAdmin, async (req, res) => {
+  const { status } = req.body;
+  try {
+    await pool.query('UPDATE requests SET status = $1 WHERE id = $2', [status, req.params.id]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/requests/:id', requireKeyOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM requests WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/request-access', requireKey, async (req, res) => {
-  const { username, fullName, message } = req.body;
+  const { username, fullName, message, type } = req.body;
+  const reqType = type || 'access';
   if (!username || !message) return res.status(400).json({ error: 'Missing fields' });
+
+  // Always save to database first
+  try {
+    await pool.query(
+      'INSERT INTO requests (type, username, full_name, message) VALUES ($1, $2, $3, $4)',
+      [reqType, username, fullName, message]
+    );
+  } catch(dbErr) {
+    console.error('DB save error:', dbErr.message);
+  }
 
   const gmailUser = process.env.GMAIL_USER;
   const gmailPass = process.env.GMAIL_PASS;
   const notifyEmails = process.env.NOTIFY_EMAILS || gmailUser;
 
   if (!gmailUser || !gmailPass) {
-    return res.status(500).json({ error: 'Email not configured on server' });
+    return res.json({ ok: true, note: 'Saved to inbox but email not configured' });
   }
 
-  const recipients = notifyEmails.split(',').map(e => e.trim()).filter(Boolean);
+  const typeLabels = { access: 'Access Request', tool: 'Tool Request', reschedule: 'Reschedule Request', bug: 'Bug Report' };
+  const typeLabel = typeLabels[reqType] || reqType;
+  const recipients = (notifyEmails || '').split(',').map(e => e.trim()).filter(Boolean);
+  const safeMessage = message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const emailBody = [
+    '<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px">',
+    '<div style="background:linear-gradient(135deg,#8b5cf6,#22d3ee);padding:3px;border-radius:10px;margin-bottom:24px">',
+    '<div style="background:#13141c;border-radius:8px;padding:20px">',
+    '<h2 style="margin:0;font-size:20px">' + typeLabel + '</h2>',
+    '<p style="margin:4px 0 0;color:#7c7d8a;font-size:13px">TechLearn Training Platform</p>',
+    '</div></div>',
+    '<p style="font-size:14px;color:#7c7d8a;margin-bottom:8px">From</p>',
+    '<p style="font-size:16px;font-weight:600;margin:0 0 20px">' + fullName + ' <span style="color:#7c7d8a;font-weight:400;font-size:13px">(' + username + ')</span></p>',
+    '<p style="font-size:14px;color:#7c7d8a;margin-bottom:8px">Message</p>',
+    '<div style="background:#1a1b26;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:16px;font-size:14px;line-height:1.7;white-space:pre-wrap">' + safeMessage + '</div>',
+    '<p style="font-size:11px;color:#7c7d8a;margin-top:24px;text-align:center">Sent via TechLearn &mdash; Lupaservices LLC</p>',
+    '</div>'
+  ].join('');
 
   try {
     const nodemailer = require('nodemailer');
@@ -414,35 +488,17 @@ app.post('/request-access', requireKey, async (req, res) => {
       service: 'gmail',
       auth: { user: gmailUser, pass: gmailPass }
     });
-
     await transporter.sendMail({
-      from: '"TechLearn Notifications" <' + gmailUser + '>',
+      from: '"TechLearn" <' + gmailUser + '>',
       to: recipients.join(', '),
-      subject: 'TechLearn Access Request from ' + fullName,
-      html: [
-        '<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#f9f9f9;border-radius:12px">',
-        '<h2 style="color:#8b5cf6;margin-bottom:8px">&#128274; Access Request</h2>',
-        '<p style="color:#666;font-size:13px;margin-bottom:20px">TechLearn Training Platform</p>',
-        '<p><strong>From:</strong> ' + fullName + ' <span style="color:#888">(' + username + ')</span></p>',
-        '<p style="margin-top:16px"><strong>Request:</strong></p>',
-        '<div style="background:#fff;border:1px solid #ddd;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:14px;line-height:1.6">' + message.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>',
-        '<p style="font-size:11px;color:#999;margin-top:20px;text-align:center">Sent via TechLearn &mdash; LupA Services</p>',
-        '</div>'
-      ].join('')
+      subject: 'TechLearn ' + typeLabel + ' from ' + fullName,
+      html: emailBody
     });
-
     res.json({ ok: true });
   } catch(e) {
     console.error('Email error:', e.message);
-    res.status(500).json({ error: e.message });
+    res.json({ ok: true, note: 'Saved but email failed: ' + e.message });
   }
 });
 
 
-// ── START ─────────────────────────────────────────────────────────────────────
-initDb().then(() => {
-  app.listen(PORT, () => console.log(`TechLearn API running on port ${PORT}`));
-}).catch(err => {
-  console.error('Failed to init database:', err.message);
-  process.exit(1);
-});
