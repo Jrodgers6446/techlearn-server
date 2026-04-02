@@ -110,6 +110,17 @@ app.post('/admin/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/admin/verify', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token || !sessions.has(token)) return res.status(401).json({ error: 'Invalid token' });
+  const session = sessions.get(token);
+  if (Date.now() - session.created > 8 * 60 * 60 * 1000) {
+    sessions.delete(token);
+    return res.status(401).json({ error: 'Session expired' });
+  }
+  res.json({ ok: true });
+});
+
 // ── ADMIN HTML ────────────────────────────────────────────────────────────────
 app.get('/admin', async (req, res) => {
   try {
