@@ -12,7 +12,6 @@ const express    = require('express');
 const cors       = require('cors');
 const { Pool }   = require('pg');
 const crypto     = require('crypto');
-const nodemailer = require('nodemailer');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -497,7 +496,9 @@ app.post('/request-access', requireKey, async (req, res) => {
   res.json({ ok: true });
 
   try {
-    const transporter = nodemailer.createTransport({
+    let nm;
+    try { nm = require('nodemailer'); } catch(e) { console.warn('nodemailer not available:', e.message); return; }
+    const transporter = nm.createTransport({
       service: 'gmail',
       auth: { user: gmailUser, pass: gmailPass },
       connectionTimeout: 10000,
