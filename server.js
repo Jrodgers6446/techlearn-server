@@ -499,6 +499,15 @@ app.post('/request-access', requireKey, async (req, res) => {
     console.error('Email error:', e.message);
     res.json({ ok: true, note: 'Saved but email failed: ' + e.message });
   }
-});
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  })
+  .catch(err => {
+    console.error('Failed to initialize database:', err);
+    process.exit(1);
+  });
 
 
