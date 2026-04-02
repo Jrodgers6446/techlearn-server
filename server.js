@@ -154,7 +154,7 @@ app.get('/admin/data', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/data', requireAdmin, async (req, res) => {
+app.post('/admin/data', requireKeyOrAdmin, async (req, res) => {
   const { key, value } = req.body;
   if (!key || value === undefined) return res.status(400).json({ error: 'Missing key or value' });
   try {
