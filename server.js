@@ -29,7 +29,12 @@ db.exec(`
 `);
 
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-API-Key']
+}));
+app.options('*', cors());
 app.use(express.json());
 
 // Auth middleware — checks X-API-Key header
