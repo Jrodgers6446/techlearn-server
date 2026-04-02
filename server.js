@@ -53,6 +53,16 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS changelog (
+      id         SERIAL PRIMARY KEY,
+      version    TEXT        NOT NULL,
+      title      TEXT        NOT NULL,
+      body       TEXT        NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   // Insert placeholder training page if empty
   const tc = await pool.query('SELECT COUNT(*) as cnt FROM training_html');
   if (parseInt(tc.rows[0].cnt) === 0) {
@@ -339,6 +349,50 @@ app.post('/guidebook', requireKey, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ── CHANGELOG ────────────────────────────────────────────────────────────────
+// ── LEGAL PAGE ───────────────────────────────────────────────────────────────
+app.get('/legal', async (req, res) => {
+  try {
+    const r = await pool.query("SELECT value FROM admin_data WHERE key = 'legal_page'");
+    if (!r.rows.length) return res.json({ content: '' });
+    res.json({ content: JSON.parse(r.rows[0].value) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/changelog', async (req, res) => {
+  try {
+    const rows = await pool.query('SELECT * FROM changelog ORDER BY created_at DESC');
+    res.json(rows.rows);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/changelog', requireKeyOrAdmin, async (req, res) => {
+  const { version, title, body } = req.body;
+  if (!version || !title || !body) return res.status(400).json({ error: 'Missing fields' });
+  try {
+    await pool.query(
+      'INSERT INTO changelog (version, title, body) VALUES ($1, $2, $3)',
+      [version, title, body]
+    );
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/changelog/:id', requireKeyOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM changelog WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── REQUEST ACCESS ───────────────────────────────────────────────────────────
 app.post('/request-access', requireKey, async (req, res) => {
   const { username, fullName, message } = req.body;
