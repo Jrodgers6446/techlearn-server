@@ -1,12 +1,15 @@
 const express = require('express');
 const cors    = require('cors');
 const { Pool } = require('pg');
+const path    = require('path');
+const fs      = require('fs');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
 const API_KEY = process.env.API_KEY || 'changeme';
 
+// ── DATABASE ──────────────────────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -16,26 +19,42 @@ async function initDb() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS results (
       id           SERIAL PRIMARY KEY,
-      username     TEXT    NOT NULL,
-      full_name    TEXT    NOT NULL,
-      module_id    INTEGER NOT NULL,
-      module_title TEXT    NOT NULL,
-      score        INTEGER NOT NULL,
-      passed       BOOLEAN NOT NULL,
-      attempt      INTEGER NOT NULL DEFAULT 1,
+      username     TEXT        NOT NULL,
+      full_name    TEXT        NOT NULL,
+      module_id    INTEGER     NOT NULL,
+      module_title TEXT        NOT NULL,
+      score        INTEGER     NOT NULL,
+      passed       BOOLEAN     NOT NULL,
+      attempt      INTEGER     NOT NULL DEFAULT 1,
       created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS training_html (
+      id         SERIAL PRIMARY KEY,
+      content    TEXT        NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  // Insert placeholder if empty
+  const check = await pool.query('SELECT COUNT(*) as cnt FROM training_html');
+  if (parseInt(check.rows[0].cnt) === 0) {
+    await pool.query(
+      "INSERT INTO training_html (content) VALUES ($1)",
+      ['<html><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#0d0e14;color:#e8e9f0"><div style="text-align:center"><h1>TechLearn</h1><p style="color:#7c7d8a;margin-top:1rem">No training file deployed yet.<br>Export from the admin panel to get started.</p></div></body></html>']
+    );
+  }
   console.log('Database ready');
 }
 
+// ── MIDDLEWARE ────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-API-Key']
 }));
 app.options('*', cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 function requireKey(req, res, next) {
   const key = req.headers['x-api-key'];
@@ -43,8 +62,34 @@ function requireKey(req, res, next) {
   next();
 }
 
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'TechLearn API' }));
+// ── TRAINING HTML ─────────────────────────────────────────────────────────────
 
+// Serve the training app at /
+app.get('/', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT content FROM training_html ORDER BY id DESC LIMIT 1');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(result.rows[0].content);
+  } catch (e) {
+    res.status(500).send('Error loading training file');
+  }
+});
+
+// Admin deploys new training HTML
+app.post('/deploy', requireKey, async (req, res) => {
+  const { html } = req.body;
+  if (!html) return res.status(400).json({ error: 'No HTML provided' });
+  try {
+    await pool.query('DELETE FROM training_html');
+    await pool.query('INSERT INTO training_html (content) VALUES ($1)', [html]);
+    res.json({ ok: true, url: process.env.RENDER_EXTERNAL_URL || 'deployed' });
+  } catch (e) {
+    console.error('POST /deploy error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── RESULTS ───────────────────────────────────────────────────────────────────
 app.post('/result', requireKey, async (req, res) => {
   const { username, fullName, moduleId, moduleTitle, score, passed } = req.body;
   if (!username || fullName === undefined || moduleId === undefined || score === undefined) {
@@ -68,6 +113,7 @@ app.post('/result', requireKey, async (req, res) => {
   }
 });
 
+// ── PROGRESS ──────────────────────────────────────────────────────────────────
 app.get('/progress', requireKey, async (req, res) => {
   try {
     const summary = await pool.query(`
@@ -118,6 +164,7 @@ app.delete('/result/:id', requireKey, async (req, res) => {
   }
 });
 
+// ── START ─────────────────────────────────────────────────────────────────────
 initDb().then(() => {
   app.listen(PORT, () => console.log(`TechLearn API running on port ${PORT}`));
 }).catch(err => {
