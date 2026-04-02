@@ -12,7 +12,8 @@ const API_KEY = process.env.API_KEY || 'changeme';
 // ── DATABASE ──────────────────────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  family: 4
 });
 
 async function initDb() {
