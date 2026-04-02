@@ -45,6 +45,14 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS admin_data (
+      id         SERIAL PRIMARY KEY,
+      key        TEXT        NOT NULL UNIQUE,
+      value      TEXT        NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   // Insert placeholder training page if empty
   const tc = await pool.query('SELECT COUNT(*) as cnt FROM training_html');
   if (parseInt(tc.rows[0].cnt) === 0) {
@@ -119,6 +127,34 @@ app.get('/admin/verify', (req, res) => {
     return res.status(401).json({ error: 'Session expired' });
   }
   res.json({ ok: true });
+});
+
+// ── ADMIN DATA ───────────────────────────────────────────────────────────────
+
+app.get('/admin/data', requireAdmin, async (req, res) => {
+  try {
+    const rows = await pool.query('SELECT key, value FROM admin_data');
+    const result = {};
+    rows.rows.forEach(r => { result[r.key] = JSON.parse(r.value); });
+    res.json(result);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/admin/data', requireAdmin, async (req, res) => {
+  const { key, value } = req.body;
+  if (!key || value === undefined) return res.status(400).json({ error: 'Missing key or value' });
+  try {
+    await pool.query(
+      `INSERT INTO admin_data (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      [key, JSON.stringify(value)]
+    );
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── ADMIN HTML ────────────────────────────────────────────────────────────────
