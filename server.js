@@ -292,6 +292,62 @@ app.delete('/result/:id', requireKey, async (req, res) => {
   }
 });
 
+// ── GEMINI GUIDEBOOK ─────────────────────────────────────────────────────────
+app.post('/guidebook', requireKey, async (req, res) => {
+  const { question, modules } = req.body;
+  if (!question) return res.status(400).json({ error: 'No question provided' });
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured' });
+
+  // Build context from module content
+  const context = (modules || []).map(m => {
+    const parts = [];
+    if (m.content) parts.push(m.content.replace(/<[^>]*>/g, ''));
+    if (m.questions) {
+      m.questions.forEach(q => {
+        parts.push(`Q: ${q.q}`);
+        if (q.explanation) parts.push(`A: ${q.explanation}`);
+      });
+    }
+    return `=== ${m.title} ===
+${parts.join('
+')}`;
+  }).join('
+
+');
+
+  const prompt = `You are a helpful training assistant for remote technicians. Answer questions based ONLY on the training material provided below. If the answer is not in the training material, say so clearly. Be concise and practical.
+
+TRAINING MATERIAL:
+${context}
+
+QUESTION: ${question}
+
+Answer:`;
+
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 500, temperature: 0.3 }
+      })
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.error?.message || 'Gemini API error ' + r.status);
+    }
+    const data = await r.json();
+    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated.';
+    res.json({ answer });
+  } catch(e) {
+    console.error('Guidebook error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── START ─────────────────────────────────────────────────────────────────────
 initDb().then(() => {
   app.listen(PORT, () => console.log(`TechLearn API running on port ${PORT}`));
