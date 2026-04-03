@@ -414,13 +414,13 @@ app.delete('/result/:id', requireKey, async (req, res) => {
   }
 });
 
-// ── GEMINI GUIDEBOOK ─────────────────────────────────────────────────────────
+// ── LUPA AI (GROQ) ───────────────────────────────────────────────────────────
 app.post('/guidebook', requireKey, async (req, res) => {
   const { question, modules } = req.body;
   if (!question) return res.status(400).json({ error: 'No question provided' });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'Gemini API key not configured' });
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Lupa AI not configured' });
 
   const context = (modules || []).map(m => {
     const parts = [];
@@ -434,36 +434,42 @@ app.post('/guidebook', requireKey, async (req, res) => {
     return '=== ' + m.title + ' ===\n' + parts.join('\n');
   }).join('\n\n');
 
-  const prompt = 'You are a helpful training assistant for remote technicians. '
-    + 'Answer questions based ONLY on the training material provided below. '
-    + 'If the answer is not in the training material, say so clearly. Be concise and practical.\n\n'
-    + 'TRAINING MATERIAL:\n' + context + '\n\n'
-    + 'QUESTION: ' + question + '\n\nAnswer:';
+  const prompt = 'You are Lupa, a helpful training assistant for remote technicians. Answer questions based ONLY on the training material provided below. If the answer is not in the training material, say so clearly. Be concise and practical.\n\nTRAINING MATERIAL:\n' + context + '\n\nQUESTION: ' + question + '\n\nAnswer:';
 
   try {
-    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey, {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + apiKey
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 500, temperature: 0.3 }
+        model: 'llama-3.1-8b-instant',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 500,
+        temperature: 0.3
       })
     });
+
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      const errMsg = (err.error && err.error.message) || 'Gemini API error ' + r.status;
-      console.error('Gemini error:', errMsg);
+      const errMsg = (err.error && err.error.message) || 'Groq API error ' + r.status;
+      console.error('Lupa error:', errMsg);
       throw new Error(errMsg);
     }
+
     const data = await r.json();
-    const answer = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || 'No response generated.';
+    const answer = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+      ? data.choices[0].message.content
+      : 'No response generated.';
     res.json({ answer });
   } catch(e) {
-    console.error('Guidebook error:', e.message);
+    console.error('Lupa error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
-// ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
+
+// ── ACCOUNT REQUESTS// ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
 app.post('/account-request', async (req, res) => {
   const { fullName, store, email, requestedUsername, requestedPassword } = req.body;
   if (!fullName || !store || !email || !requestedUsername || !requestedPassword) {
