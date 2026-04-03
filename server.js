@@ -638,6 +638,16 @@ app.delete('/account-requests/:id', requireKeyOrAdmin, async (req, res) => {
   }
 });
 
+// ── DELETE USER PROGRESS ─────────────────────────────────────────────────────
+app.delete('/progress/:username', requireKeyOrAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM results WHERE username = $1', [req.params.username]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── CHANGELOG ────────────────────────────────────────────────────────────────
 // ── LEGAL PAGE ───────────────────────────────────────────────────────────────
 app.get('/legal', async (req, res) => {
