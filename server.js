@@ -404,6 +404,11 @@ app.post('/result', requireKey, async (req, res) => {
 // ── PROGRESS ──────────────────────────────────────────────────────────────────
 app.get('/progress', requireKeyOrAdmin, async (req, res) => {
   try {
+    // Get hidden users list from admin_users
+    const adminUsersRow = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'").catch(() => ({ rows: [] }));
+    const adminUsers = adminUsersRow.rows.length ? JSON.parse(adminUsersRow.rows[0].value) : [];
+    const hiddenUsernames = new Set(adminUsers.filter(u => u.hideFromLeaderboard).map(u => u.username));
+
     const summary = await pool.query(`
       SELECT username, full_name,
              COUNT(DISTINCT module_id) AS modules_attempted,
@@ -420,7 +425,11 @@ app.get('/progress', requireKeyOrAdmin, async (req, res) => {
       FROM results GROUP BY username, module_id, module_title ORDER BY username, module_id
     `);
     const attempts = await pool.query('SELECT * FROM results ORDER BY created_at DESC LIMIT 500');
-    res.json({ summary: summary.rows, best: best.rows, attempts: attempts.rows });
+    const summaryWithHidden = summary.rows.map(u => ({
+      ...u,
+      hide_from_leaderboard: hiddenUsernames.has(u.username)
+    }));
+    res.json({ summary: summaryWithHidden, best: best.rows, attempts: attempts.rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
