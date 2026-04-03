@@ -63,6 +63,32 @@ async function initDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // Add columns to account_requests if they don't exist (migration)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_requests (
+      id                SERIAL PRIMARY KEY,
+      full_name         TEXT        NOT NULL DEFAULT '',
+      store             TEXT        NOT NULL DEFAULT '',
+      email             TEXT        NOT NULL DEFAULT '',
+      requested_username TEXT       NOT NULL DEFAULT '',
+      requested_password TEXT       NOT NULL DEFAULT '',
+      status            TEXT        NOT NULL DEFAULT 'pending',
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  // Add missing columns for existing tables
+  const acctMigrations = [
+    "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS full_name TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS store TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS requested_username TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS requested_password TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'"
+  ];
+  for (const m of acctMigrations) {
+    await pool.query(m).catch(() => {});
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id           SERIAL PRIMARY KEY,
@@ -76,6 +102,21 @@ async function initDb() {
     )
   `);
 
+  // Add columns to account_requests if they don't exist (migration)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS account_requests (
+      id                SERIAL PRIMARY KEY,
+      full_name         TEXT        NOT NULL DEFAULT '',
+      store             TEXT        NOT NULL DEFAULT '',
+      email             TEXT        NOT NULL DEFAULT '',
+      requested_username TEXT       NOT NULL DEFAULT '',
+      requested_password TEXT       NOT NULL DEFAULT '',
+      status            TEXT        NOT NULL DEFAULT 'pending',
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  // Add missing columns for existing tables
+  
   await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id                SERIAL PRIMARY KEY,
