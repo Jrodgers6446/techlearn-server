@@ -441,7 +441,7 @@ app.post('/guidebook', requireKey, async (req, res) => {
     + 'QUESTION: ' + question + '\n\nAnswer:';
 
   try {
-    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + apiKey, {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-06-17:generateContent?key=' + apiKey, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -451,7 +451,9 @@ app.post('/guidebook', requireKey, async (req, res) => {
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      throw new Error((err.error && err.error.message) || 'Gemini API error ' + r.status);
+      const errMsg = (err.error && err.error.message) || 'Gemini API error ' + r.status;
+      console.error('Gemini error:', errMsg);
+      throw new Error(errMsg);
     }
     const data = await r.json();
     const answer = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || 'No response generated.';
