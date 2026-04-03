@@ -591,6 +591,31 @@ kbd{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);borde
 });
 
 
+app.get('/spanky/download', (req, res) => {
+  try {
+    const apiKey = process.env.API_KEY || '';
+    const AdmZip = require('adm-zip');
+    const baseZip = Buffer.from(SPANKY_ZIP_B64, 'base64');
+    const zip = new AdmZip(baseZip);
+    if (apiKey) {
+      const entry = zip.getEntry('popup.js');
+      if (entry) {
+        let js = entry.getData().toString('utf8');
+        js = js.replace('__BAKED_API_KEY__', apiKey);
+        zip.updateFile('popup.js', Buffer.from(js, 'utf8'));
+      }
+    }
+    const out = zip.toBuffer();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="spanky_extension.zip"');
+    res.setHeader('Content-Length', out.length);
+    res.send(out);
+  } catch(e) {
+    console.error('Spanky download error:', e.message);
+    res.status(500).send('Download failed: ' + e.message);
+  }
+});
+
 // ── LUPA AI (GROQ) ───────────────────────────────────────────────────────────
 app.post('/guidebook', requireKey, async (req, res) => {
   const { question, modules } = req.body;
