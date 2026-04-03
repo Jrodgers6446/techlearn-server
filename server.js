@@ -422,17 +422,17 @@ app.post('/guidebook', requireKey, async (req, res) => {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Lupa AI not configured' });
 
+  // Keep context tight - titles + key questions only, max 1500 chars total
   const context = (modules || []).map(m => {
     const parts = [];
-    if (m.content) parts.push(m.content.replace(/<[^>]*>/g, ''));
+    if (m.content) parts.push(m.content.replace(/<[^>]*>/g, '').slice(0, 200));
     if (m.questions) {
-      m.questions.forEach(q => {
-        parts.push('Q: ' + q.q);
-        if (q.explanation) parts.push('A: ' + q.explanation);
+      m.questions.slice(0, 2).forEach(q => {
+        parts.push('Q: ' + q.q.slice(0, 80));
       });
     }
-    return '=== ' + m.title + ' ===\n' + parts.join('\n');
-  }).join('\n\n');
+    return m.title + ': ' + parts.join(' | ');
+  }).join('\n').slice(0, 1500);
 
   const prompt = 'You are Lupa, a helpful training assistant for remote technicians. Answer questions based ONLY on the training material provided below. If the answer is not in the training material, say so clearly. Be concise and practical.\n\nTRAINING MATERIAL:\n' + context + '\n\nQUESTION: ' + question + '\n\nAnswer:';
 
