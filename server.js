@@ -920,20 +920,23 @@ app.post('/request-access', requireKey, async (req, res) => {
   // Respond immediately — send email in background so request never times out
   res.json({ ok: true });
 
+  console.log('Email attempt - gmailUser:', gmailUser ? 'set' : 'MISSING', 'recipients:', recipients);
+
   try {
     let nm;
     try { nm = require('nodemailer'); } catch(e) { console.warn('nodemailer not available:', e.message); return; }
     // Support both Gmail and custom domain SMTP
     const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
-    const smtpPort = parseInt(process.env.SMTP_PORT || '587');
+    const smtpPort = parseInt(process.env.SMTP_PORT || '465');
+    console.log('SMTP config - host:', smtpHost, 'port:', smtpPort);
     const transporter = nm.createTransport({
       host: smtpHost,
       port: smtpPort,
-      secure: smtpPort === 465,
+      secure: true,
       auth: { user: gmailUser, pass: gmailPass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 20000,
       tls: { rejectUnauthorized: false }
     });
     await transporter.sendMail({
