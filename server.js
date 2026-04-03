@@ -324,6 +324,11 @@ function getAdminPlaceholder() {
 // ── TRAINING HTML ─────────────────────────────────────────────────────────────
 app.get('/', async (req, res) => {
   try {
+    // Check maintenance mode
+    const maint = await pool.query("SELECT value FROM admin_data WHERE key = 'maintenance_mode'");
+    if (maint.rows.length && JSON.parse(maint.rows[0].value) === true) {
+      return res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Under Maintenance</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',sans-serif;background:#0d0e14;color:#e8e9f0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:2rem}.card{text-align:center;max-width:480px}.icon{font-size:4rem;margin-bottom:1.5rem}.title{font-size:2rem;font-weight:700;margin-bottom:1rem;background:linear-gradient(135deg,#8b5cf6,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent}.msg{font-size:1rem;color:#7c7d8a;line-height:1.7}</style></head><body><div class="card"><div class="icon">🔧</div><div class="title">Under Maintenance</div><p class="msg">TechLearn is currently undergoing scheduled maintenance. We'll be back shortly. Thank you for your patience.</p></div></body></html>`);
+    }
     const result = await pool.query('SELECT content FROM training_html ORDER BY id DESC LIMIT 1');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(result.rows[0].content);
@@ -935,6 +940,7 @@ app.post('/request-access', requireKey, async (req, res) => {
       },
       body: JSON.stringify({
         from: 'TechLearn <noreply@techlearn-lupa.com>',
+        reply_to: process.env.GMAIL_USER || 'noreply@techlearn-lupa.com',
         to: recipients,
         subject: 'TechLearn ' + typeLabel + ' from ' + fullName,
         html: emailBody
