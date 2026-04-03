@@ -14,6 +14,34 @@ const { Pool }   = require('pg');
 const crypto     = require('crypto');
 
 const app  = express();
+
+// ── EMAIL HELPER (Resend) ─────────────────────────────────────────────────────
+async function sendEmail(to, subject, html) {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) { console.warn('RESEND_API_KEY not set'); return false; }
+  const toArr = Array.isArray(to) ? to : [to];
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + resendKey },
+      body: JSON.stringify({
+        from: 'TechLearn <noreply@techlearn-lupa.com>',
+        to: toArr,
+        subject,
+        html
+      })
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.message || 'Resend error ' + r.status);
+    }
+    console.log('Email sent to', toArr.join(', '));
+    return true;
+  } catch(e) {
+    console.error('Email error:', e.message);
+    return false;
+  }
+}
 const PORT = process.env.PORT || 3000;
 
 const API_KEY    = process.env.API_KEY    || 'changeme';
@@ -192,7 +220,7 @@ function requireAdmin(req, res, next) {
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Admin-Token']
 }));
 app.options('*', cors());
@@ -481,10 +509,7 @@ app.post('/account-request', async (req, res) => {
     return res.status(400).json({ error: 'All fields are required' });
   }
   try {
-    // Check username not already taken
-    const existing = await pool.query(
-      "SELECT value FROM admin_data WHERE key = 'admin_users'"
-    );
+    const existing = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
     if (existing.rows.length) {
       const existingUsers = JSON.parse(existing.rows[0].value);
       if (existingUsers.find(u => u.username === requestedUsername.toLowerCase())) {
@@ -495,47 +520,30 @@ app.post('/account-request', async (req, res) => {
       'INSERT INTO account_requests (full_name, store, email, requested_username, requested_password) VALUES ($1, $2, $3, $4, $5)',
       [fullName, store, email, requestedUsername.toLowerCase(), requestedPassword]
     );
+    res.json({ ok: true });
 
-    // Notify admins via email
-    const gmailUser = process.env.GMAIL_USER;
-    const gmailPass = process.env.GMAIL_PASS;
-    const notifyEmails = process.env.NOTIFY_EMAILS || '';
-    if (gmailUser && gmailPass && notifyEmails) {
-      const recipients = notifyEmails.split(',').map(e => e.trim()).filter(Boolean);
-      res.json({ ok: true });
-      try {
-        let nm;
-        try { nm = require('nodemailer'); } catch(e) { return; }
-        const transporter = nm.createTransport({
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.SMTP_PORT || '587'),
-          secure: false,
-          auth: { user: gmailUser, pass: gmailPass },
-          tls: { rejectUnauthorized: false }
-        });
-        await transporter.sendMail({
-          from: '"TechLearn" <' + gmailUser + '>',
-          to: recipients.join(', '),
-          subject: 'New Account Request from ' + fullName,
-          html: '<div style="font-family:sans-serif;max-width:600px;padding:24px">'
-            + '<h2>New Account Request</h2>'
-            + '<p><strong>Name:</strong> ' + fullName + '</p>'
-            + '<p><strong>Store:</strong> ' + store + '</p>'
-            + '<p><strong>Email:</strong> ' + email + '</p>'
-            + '<p><strong>Requested Username:</strong> ' + requestedUsername + '</p>'
-            + '<p><strong>Requested Password:</strong> ' + requestedPassword + '</p>'
-            + '<p>Log in to the admin panel to approve or deny this request.</p>'
-            + '</div>'
-        });
-      } catch(e) { console.error('Email error:', e.message); }
-    } else {
-      res.json({ ok: true });
+    // Notify admins
+    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+    if (notifyEmails.length) {
+      setImmediate(() => sendEmail(
+        notifyEmails,
+        'New Account Request from ' + fullName,
+        '<div style="font-family:sans-serif;max-width:600px;padding:24px">'
+        + '<h2>New Account Request</h2>'
+        + '<p><strong>Name:</strong> ' + fullName + '</p>'
+        + '<p><strong>Store:</strong> ' + store + '</p>'
+        + '<p><strong>Email:</strong> ' + email + '</p>'
+        + '<p><strong>Username:</strong> ' + requestedUsername + '</p>'
+        + '<p>Log in to the admin panel to approve or deny.</p>'
+        + '</div>'
+      ));
     }
   } catch(e) {
     console.error('Account request error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
+
 
 app.get('/account-requests', requireKeyOrAdmin, async (req, res) => {
   try {
@@ -560,45 +568,30 @@ app.post('/account-requests/:id/approve', requireKeyOrAdmin, async (req, res) =>
       "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
       [JSON.stringify(users)]
     );
-
-    // Update status
     await pool.query("UPDATE account_requests SET status = 'approved' WHERE id = $1", [req.params.id]);
-
-    // Send approval email
-    const gmailUser = process.env.GMAIL_USER;
-    const gmailPass = process.env.GMAIL_PASS;
     res.json({ ok: true });
-    if (gmailUser && gmailPass && r.email) {
-      try {
-        let nm;
-        try { nm = require('nodemailer'); } catch(e) { return; }
-        const transporter = nm.createTransport({
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.SMTP_PORT || '587'),
-          secure: false,
-          auth: { user: gmailUser, pass: gmailPass },
-          tls: { rejectUnauthorized: false }
-        });
-        await transporter.sendMail({
-          from: '"TechLearn" <' + gmailUser + '>',
-          to: r.email,
-          subject: 'Your TechLearn Account Has Been Approved',
-          html: '<div style="font-family:sans-serif;max-width:600px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px">'
-            + '<h2 style="color:#8b5cf6">Account Approved!</h2>'
-            + '<p>Hi ' + r.full_name + ', your TechLearn account has been approved.</p>'
-            + '<p><strong>Username:</strong> ' + r.requested_username + '</p>'
-            + '<p><strong>Password:</strong> ' + r.requested_password + '</p>'
-            + '<p>Visit <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> to log in.</p>'
-            + '<p style="font-size:11px;color:#7c7d8a;margin-top:24px">TechLearn &mdash; Lupaservices LLC</p>'
-            + '</div>'
-        });
-      } catch(e) { console.error('Approval email error:', e.message); }
+
+    // Send approval email to trainee
+    if (r.email) {
+      setImmediate(() => sendEmail(
+        r.email,
+        'Your TechLearn Account Has Been Approved',
+        '<div style="font-family:sans-serif;max-width:600px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px">'
+        + '<h2 style="color:#8b5cf6">Account Approved!</h2>'
+        + '<p>Hi ' + r.full_name + ', your TechLearn account has been approved.</p>'
+        + '<p><strong>Username:</strong> ' + r.requested_username + '</p>'
+        + '<p><strong>Password:</strong> ' + r.requested_password + '</p>'
+        + '<p>Visit <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> to log in.</p>'
+        + '<p style="font-size:11px;color:#7c7d8a;margin-top:24px">TechLearn &mdash; Lupaservices LLC</p>'
+        + '</div>'
+      ));
     }
   } catch(e) {
     console.error('Approve error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
+
 
 app.post('/account-requests/:id/deny', requireKeyOrAdmin, async (req, res) => {
   try {
@@ -609,36 +602,23 @@ app.post('/account-requests/:id/deny', requireKeyOrAdmin, async (req, res) => {
     res.json({ ok: true });
 
     // Send denial email
-    const gmailUser = process.env.GMAIL_USER;
-    const gmailPass = process.env.GMAIL_PASS;
-    if (gmailUser && gmailPass && r.email) {
-      try {
-        let nm;
-        try { nm = require('nodemailer'); } catch(e) { return; }
-        const transporter = nm.createTransport({
-          host: process.env.SMTP_HOST || 'smtp.gmail.com',
-          port: parseInt(process.env.SMTP_PORT || '587'),
-          secure: false,
-          auth: { user: gmailUser, pass: gmailPass },
-          tls: { rejectUnauthorized: false }
-        });
-        await transporter.sendMail({
-          from: '"TechLearn" <' + gmailUser + '>',
-          to: r.email,
-          subject: 'Your TechLearn Account Request',
-          html: '<div style="font-family:sans-serif;max-width:600px;padding:24px">'
-            + '<h2>Account Request Update</h2>'
-            + '<p>Hi ' + r.full_name + ', unfortunately your account request was not approved at this time.</p>'
-            + '<p>Please contact your manager for more information.</p>'
-            + '<p style="font-size:11px;color:#999;margin-top:24px">TechLearn &mdash; Lupaservices LLC</p>'
-            + '</div>'
-        });
-      } catch(e) { console.error('Denial email error:', e.message); }
+    if (r.email) {
+      setImmediate(() => sendEmail(
+        r.email,
+        'Your TechLearn Account Request',
+        '<div style="font-family:sans-serif;max-width:600px;padding:24px">'
+        + '<h2>Account Request Update</h2>'
+        + '<p>Hi ' + r.full_name + ', unfortunately your account request was not approved at this time.</p>'
+        + '<p>Please contact your manager for more information.</p>'
+        + '<p style="font-size:11px;color:#999;margin-top:24px">TechLearn &mdash; Lupaservices LLC</p>'
+        + '</div>'
+      ));
     }
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
+
 
 app.delete('/account-requests/:id', requireKeyOrAdmin, async (req, res) => {
   try {
