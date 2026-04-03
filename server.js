@@ -920,32 +920,31 @@ app.post('/request-access', requireKey, async (req, res) => {
   // Respond immediately — send email in background so request never times out
   res.json({ ok: true });
 
-  console.log('Email attempt - gmailUser:', gmailUser ? 'set' : 'MISSING', 'recipients:', recipients);
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) {
+    console.warn('RESEND_API_KEY not set - email not sent');
+    return;
+  }
 
   try {
-    let nm;
-    try { nm = require('nodemailer'); } catch(e) { console.warn('nodemailer not available:', e.message); return; }
-    // Support both Gmail and custom domain SMTP
-    const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com';
-    const smtpPort = parseInt(process.env.SMTP_PORT || '465');
-    console.log('SMTP config - host:', smtpHost, 'port:', smtpPort);
-    const transporter = nm.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: true,
-      auth: { user: gmailUser, pass: gmailPass },
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 20000,
-      tls: { rejectUnauthorized: false }
+    const emailResp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + resendKey
+      },
+      body: JSON.stringify({
+        from: 'TechLearn <noreply@techlearn-lupa.com>',
+        to: recipients,
+        subject: 'TechLearn ' + typeLabel + ' from ' + fullName,
+        html: emailBody
+      })
     });
-    await transporter.sendMail({
-      from: '"TechLearn" <' + gmailUser + '>',
-      to: recipients.join(', '),
-      subject: 'TechLearn ' + typeLabel + ' from ' + fullName,
-      html: emailBody
-    });
-    console.log('Email sent for request from', fullName);
+    if (!emailResp.ok) {
+      const err = await emailResp.json().catch(() => ({}));
+      throw new Error(err.message || 'Resend error ' + emailResp.status);
+    }
+    console.log('Email sent via Resend for request from', fullName);
   } catch(e) {
     console.error('Email error:', e.message);
   }
