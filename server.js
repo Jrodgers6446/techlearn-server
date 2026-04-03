@@ -84,7 +84,10 @@ async function initDb() {
     "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS requested_username TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS requested_password TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE account_requests ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'",
-    "ALTER TABLE account_requests ALTER COLUMN username DROP NOT NULL"
+    "ALTER TABLE account_requests ALTER COLUMN username DROP NOT NULL",
+    "ALTER TABLE account_requests ALTER COLUMN password DROP NOT NULL",
+    "ALTER TABLE account_requests ALTER COLUMN message DROP NOT NULL",
+    "ALTER TABLE account_requests ALTER COLUMN type DROP NOT NULL"
   ];
   for (const m of acctMigrations) {
     await pool.query(m).catch(() => {});
