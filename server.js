@@ -1061,7 +1061,7 @@ app.post('/request-access', requireKey, async (req, res) => {
     return res.json({ ok: true, note: 'Saved to inbox but email not configured' });
   }
 
-  const typeLabels = { access: 'Access Request', tool: 'Tool Request', reschedule: 'Reschedule Request', bug: 'Bug Report' };
+  const typeLabels = { access: 'Access Request', tool: 'Tool Request', reschedule: 'Reschedule Request', clothes: 'Clothing Order', bug: 'Bug Report' };
   const typeLabel = typeLabels[reqType] || reqType;
   const recipients = (notifyEmails || '').split(',').map(e => e.trim()).filter(Boolean);
   const safeMessage = message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
