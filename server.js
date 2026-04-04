@@ -262,7 +262,7 @@ function requireAdmin(req, res, next) {
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Admin-Token']
+  allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Admin-Token', 'X-Harbor-Token']
 }));
 app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
@@ -561,9 +561,14 @@ app.get('/harbor/verify', requireHarbor, (req, res) => {
 app.get('/harbor/data', requireHarbor, async (req, res) => {
   try {
     const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_data'");
-    const data = result.rows.length ? JSON.parse(result.rows[0].value) : {};
+    let data = {};
+    if (result.rows.length) {
+      try { data = JSON.parse(result.rows[0].value); } catch(e) { console.error('harbor/data parse error:', e.message); }
+    }
+    console.log('harbor/data - modules count:', data.modules ? data.modules.length : 0);
     res.json({ ok: true, data });
   } catch(e) {
+    console.error('harbor/data error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
