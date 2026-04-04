@@ -56,6 +56,7 @@ const pool = new Pool({
 });
 
 async function initDb() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS preview_html (id SERIAL PRIMARY KEY, content TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`).catch(() => {});
   await pool.query(`
     CREATE TABLE IF NOT EXISTS results (
       id           SERIAL PRIMARY KEY,
