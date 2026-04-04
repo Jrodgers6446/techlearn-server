@@ -274,16 +274,6 @@ function requireHarbor(req, res, next) {
   res.status(401).json({ error: 'Harbor authentication required' });
 }
 
-function requireKeyOrHarbor(req, res, next) {
-  const harborTok = req.headers['x-harbor-token'];
-  if (harborTok && harborSessions.has(harborTok)) return next();
-  const apiKey = req.headers['x-api-key'] || req.query.key;
-  const adminTok = req.headers['x-admin-token'];
-  if (apiKey && apiKey === process.env.API_KEY) return next();
-  if (adminTok && sessions.get(adminTok) && Date.now() < sessions.get(adminTok).expires) return next();
-  res.status(401).json({ error: 'Unauthorized' });
-}
-
 function requireKey(req, res, next) {
   const key = req.headers['x-api-key'];
   if (!key || key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
@@ -1224,48 +1214,6 @@ app.delete('/progress/:username', requireKeyOrAdmin, async (req, res) => {
   }
 });
 
-// ── ANNOUNCEMENT ─────────────────────────────────────────────────────────────
-app.get('/announcement', async (req, res) => {
-  try {
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'announcement'");
-    const text = result.rows.length ? JSON.parse(result.rows[0].value) : '';
-    res.json({ announcement: text });
-  } catch(e) { res.json({ announcement: '' }); }
-});
-
-app.post('/announcement', requireKeyOrAdmin, async (req, res) => {
-  const { text } = req.body;
-  try {
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('announcement', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(text || '')]
-    );
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Also allow harbor to set announcement
-app.post('/harbor/announcement', requireHarbor, async (req, res) => {
-  const { text } = req.body;
-  try {
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('announcement', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(text || '')]
-    );
-    // Also update admin_data.announcement
-    const existing = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_data'");
-    if (existing.rows.length) {
-      const data = JSON.parse(existing.rows[0].value);
-      data.announcement = text || '';
-      await pool.query(
-        "INSERT INTO admin_data (key, value) VALUES ('admin_data', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-        [JSON.stringify(data)]
-      );
-    }
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
 // ── CHANGELOG ────────────────────────────────────────────────────────────────
 // ── LEGAL PAGE ───────────────────────────────────────────────────────────────
 app.get('/legal', async (req, res) => {
@@ -1287,7 +1235,7 @@ app.get('/changelog', async (req, res) => {
   }
 });
 
-app.post('/changelog', requireKeyOrHarbor, async (req, res) => {
+app.post('/changelog', requireKeyOrAdmin, async (req, res) => {
   const { version, title, body } = req.body;
   if (!version || !title || !body) return res.status(400).json({ error: 'Missing fields' });
   try {
@@ -1301,7 +1249,7 @@ app.post('/changelog', requireKeyOrHarbor, async (req, res) => {
   }
 });
 
-app.delete('/changelog/:id', requireKeyOrHarbor, async (req, res) => {
+app.delete('/changelog/:id', requireKeyOrAdmin, async (req, res) => {
   try {
     await pool.query('DELETE FROM changelog WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -1579,7 +1527,6 @@ app.post('/request-access', requireKey, async (req, res) => {
   if (!username || !message) return res.status(400).json({ error: 'Missing fields' });
 
   // Always save to database first
-  const role = req.body.role || null;
   try {
     await pool.query(
       'INSERT INTO requests (type, username, full_name, message) VALUES ($1, $2, $3, $4)',
@@ -1598,9 +1545,6 @@ app.post('/request-access', requireKey, async (req, res) => {
   }
 
   const typeLabels = { access: 'Access Request', tool: 'Tool Request', reschedule: 'Reschedule Request', clothes: 'Clothing Order', bug: 'Bug Report' };
-  // Role-based routing: managers go to admin inbox, techs go to manager inbox
-  const isManagerRole = role === 'manager';
-  const roleLabel = role === 'technician' ? 'In Store Technician' : role === 'remote' ? 'Remote Technician' : role === 'manager' ? 'Store Manager' : null;
   const typeLabel = typeLabels[reqType] || reqType;
   const recipients = (notifyEmails || '').split(',').map(e => e.trim()).filter(Boolean);
   const safeMessage = message.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
