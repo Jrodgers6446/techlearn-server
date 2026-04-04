@@ -1,12 +1,4 @@
 
-app.get('/preview', async (req, res) => {
-  try {
-    const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1');
-    if (!result.rows.length) return res.send('<h2>No preview yet.</h2>');
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(result.rows[0].content);
-  } catch(e) { res.status(500).send('Error'); }
-});
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err.message);
   console.error(err.stack);
@@ -1768,6 +1760,17 @@ app.post('/admin/deploy-preview', requireKeyOrAdmin, async (req, res) => {
     await pool.query('INSERT INTO preview_html (content) VALUES ($1)', [html]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ── PREVIEW ───────────────────────────────────────────────────────────────────
+app.get('/preview', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1');
+    if (!result.rows.length) return res.send('<h2 style="font-family:sans-serif;padding:2rem;background:#0d0e14;color:#e8e9f0">No preview deployed yet.</h2>');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(result.rows[0].content);
+  } catch(e) { res.status(500).send('Error'); }
 });
 
 
