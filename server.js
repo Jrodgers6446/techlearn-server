@@ -344,7 +344,7 @@ app.get('/admin/data', async (req, res) => {
   try {
     const rows = await pool.query('SELECT key, value FROM admin_data');
     const result = {};
-    rows.rows.forEach(r => { result[r.key] = JSON.parse(r.value); });
+    rows.rows.forEach(r => { try { result[r.key] = JSON.parse(r.value); } catch(e) { result[r.key] = r.value; } });
     res.json(result);
   } catch(e) {
     res.status(500).json({ error: e.message });
