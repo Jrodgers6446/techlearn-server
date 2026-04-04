@@ -1127,3 +1127,46 @@ initDb()
     console.error('Failed to initialize database:', err);
     process.exit(1);
   });
+
+// -- PREVIEW SYSTEM -----------------------------------------------------------
+app.get('/preview', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1');
+    if (!result.rows.length) {
+      return res.send('<div style="font-family:sans-serif;padding:2rem;background:#0d0e14;color:#e8e9f0;min-height:100vh"><h2>No preview deployed yet.</h2><p style="color:#7c7d8a;margin-top:.5rem">Click Deploy to Preview in the admin panel.</p></div>');
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(result.rows[0].content);
+  } catch(e) {
+    res.status(500).send('Error loading preview');
+  }
+});
+
+app.post('/admin/deploy-preview', requireKeyOrAdmin, async (req, res) => {
+  const { html } = req.body;
+  if (!html) return res.status(400).json({ error: 'No HTML provided' });
+  try {
+    await pool.query('DELETE FROM preview_html');
+    await pool.query('INSERT INTO preview_html (content) VALUES ($1)', [html]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});// -- PREVIEW SYSTEM
+app.get('/preview', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1');
+    if (!result.rows.length) return res.send('<h2 style="font-family:sans-serif;padding:2rem">No preview yet.</h2>');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(result.rows[0].content);
+  } catch(e) { res.status(500).send('Error'); }
+});
+app.post('/admin/deploy-preview', requireKeyOrAdmin, async (req, res) => {
+  const { html } = req.body;
+  if (!html) return res.status(400).json({ error: 'No HTML' });
+  try {
+    await pool.query('DELETE FROM preview_html');
+    await pool.query('INSERT INTO preview_html (content) VALUES ($1)', [html]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
