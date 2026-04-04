@@ -236,6 +236,7 @@ async function initDb() {
 
 // ── SIMPLE SESSION STORE ──────────────────────────────────────────────────────
 const sessions = new Map();
+const harborSessions = new Map();
 
 function createSession() {
   const token = crypto.randomBytes(32).toString('hex');
