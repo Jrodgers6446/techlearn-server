@@ -1,3 +1,12 @@
+
+app.get('/preview', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1');
+    if (!result.rows.length) return res.send('<h2>No preview yet.</h2>');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(result.rows[0].content);
+  } catch(e) { res.status(500).send('Error'); }
+});
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err.message);
   console.error(err.stack);
@@ -1774,3 +1783,9 @@ initDb()
     console.error('Failed to initialize database:', err);
     process.exit(1);
   });
+
+app.get('/preview', async (req, res) => { try { const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1'); if (!result.rows.length) return res.send('<h2>No preview yet.</h2>'); res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(result.rows[0].content); } catch(e) { res.status(500).send('Error'); } });
+
+app.get('/preview', async (req, res) => { try { const result = await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1'); if (!result.rows.length) return res.send('<h2>No preview yet.</h2>'); res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(result.rows[0].content); } catch(e) { res.status(500).send('Error'); } });
+
+app.get('/preview',async(req,res)=>{try{const r=await pool.query('SELECT content FROM preview_html ORDER BY id DESC LIMIT 1');if(!r.rows.length)return res.send('<h2>No preview</h2>');res.setHeader('Content-Type','text/html');res.send(r.rows[0].content);}catch(e){res.status(500).send('error');}});
