@@ -93,16 +93,6 @@ async function initDb() {
   `);
   // Add columns to account_requests if they don't exist (migration)
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS managers (
-      id          SERIAL PRIMARY KEY,
-      name        TEXT NOT NULL,
-      username    TEXT NOT NULL UNIQUE,
-      password    TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `).catch(() => {});
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id                SERIAL PRIMARY KEY,
       full_name         TEXT        NOT NULL DEFAULT '',
@@ -132,16 +122,6 @@ async function initDb() {
   }
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS managers (
-      id          SERIAL PRIMARY KEY,
-      name        TEXT NOT NULL,
-      username    TEXT NOT NULL UNIQUE,
-      password    TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `).catch(() => {});
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id           SERIAL PRIMARY KEY,
       full_name    TEXT        NOT NULL,
@@ -156,16 +136,6 @@ async function initDb() {
 
   // Add columns to account_requests if they don't exist (migration)
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS managers (
-      id          SERIAL PRIMARY KEY,
-      name        TEXT NOT NULL,
-      username    TEXT NOT NULL UNIQUE,
-      password    TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `).catch(() => {});
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id                SERIAL PRIMARY KEY,
       full_name         TEXT        NOT NULL DEFAULT '',
@@ -179,16 +149,6 @@ async function initDb() {
   `).catch(() => {});
   // Add missing columns for existing tables
   
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS managers (
-      id          SERIAL PRIMARY KEY,
-      name        TEXT NOT NULL,
-      username    TEXT NOT NULL UNIQUE,
-      password    TEXT NOT NULL,
-      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `).catch(() => {});
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id                SERIAL PRIMARY KEY,
@@ -236,7 +196,6 @@ async function initDb() {
 
 // ── SIMPLE SESSION STORE ──────────────────────────────────────────────────────
 const sessions = new Map();
-const harborSessions = new Map();
 
 function createSession() {
   const token = crypto.randomBytes(32).toString('hex');
@@ -262,17 +221,10 @@ function requireAdmin(req, res, next) {
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Admin-Token', 'X-Harbor-Token']
+  allowedHeaders: ['Content-Type', 'X-API-Key', 'X-Admin-Token']
 }));
 app.options('*', cors());
 app.use(express.json({ limit: '10mb' }));
-
-// ── HARBOR AUTH ──────────────────────────────────────────────────────────────
-function requireHarbor(req, res, next) {
-  const token = req.headers['x-harbor-token'];
-  if (token && harborSessions.has(token)) return next();
-  res.status(401).json({ error: 'Harbor authentication required' });
-}
 
 function requireKey(req, res, next) {
   const key = req.headers['x-api-key'];
@@ -345,7 +297,7 @@ app.get('/admin/data', async (req, res) => {
   try {
     const rows = await pool.query('SELECT key, value FROM admin_data');
     const result = {};
-    rows.rows.forEach(r => { try { result[r.key] = JSON.parse(r.value); } catch(e) { result[r.key] = r.value; } });
+    rows.rows.forEach(r => { result[r.key] = JSON.parse(r.value); });
     res.json(result);
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -400,17 +352,6 @@ function getAdminPlaceholder() {
 // ── TRAINING HTML ─────────────────────────────────────────────────────────────
 app.get('/', async (req, res) => {
   try {
-    // Serve Harbor if request is from harbor domain
-    const host = req.hostname || '';
-    if (host.includes('techlearn-harbor') || host.includes('harbor.techlearn')) {
-      const harborResult = await pool.query("SELECT value FROM admin_data WHERE key = 'harbor_html'");
-      if (harborResult.rows.length && harborResult.rows[0].value) {
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        return res.send(harborResult.rows[0].value);
-      }
-      return res.setHeader('Content-Type', 'text/html').status(200).send('<div style="font-family:sans-serif;padding:2rem;background:#0d0e14;color:#e8e9f0;min-height:100vh"><h2>Harbor not deployed yet.</h2><p style="color:#7c7d8a;margin-top:.5rem">Deploy Harbor from the admin panel first.</p></div>');
-    }
-
     // Check maintenance mode
     const maint = await pool.query("SELECT value FROM admin_data WHERE key = 'maintenance_mode'");
     if (maint.rows.length && JSON.parse(maint.rows[0].value) === true) {
@@ -461,17 +402,7 @@ app.post('/result', requireKey, async (req, res) => {
 });
 
 // ── PROGRESS ──────────────────────────────────────────────────────────────────
-app.get('/progress', async (req, res) => {
-  // Allow harbor token OR admin/key auth
-  const harborTok = req.headers['x-harbor-token'];
-  if (!harborTok || !harborSessions.has(harborTok)) {
-    const apiKey = req.headers['x-api-key'] || req.query.key;
-    const adminTok = req.headers['x-admin-token'];
-    if (!apiKey && !adminTok) return res.status(401).json({ error: 'Unauthorized' });
-    if (apiKey && apiKey !== process.env.API_KEY) return res.status(401).json({ error: 'Unauthorized' });
-  }
-  // eslint-disable-next-line no-unused-vars
-  const _skip = null;
+app.get('/progress', requireKeyOrAdmin, async (req, res) => {
   try {
     // Get hidden users list from admin_users
     const adminUsersRow = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'").catch(() => ({ rows: [] }));
@@ -521,189 +452,6 @@ app.delete('/result/:id', requireKey, async (req, res) => {
     await pool.query('DELETE FROM results WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── HARBOR PORTAL ────────────────────────────────────────────────────────────
-
-// Harbor login
-app.post('/harbor/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1 AND password = $2', [username.toLowerCase(), password]);
-    if (!result.rows.length) return res.status(401).json({ error: 'Invalid username or password' });
-    const manager = result.rows[0];
-    const token = require('crypto').randomBytes(32).toString('hex');
-    harborSessions.set(token, { id: manager.id, name: manager.name, username: manager.username });
-    res.json({ ok: true, token, name: manager.name });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Harbor logout
-app.post('/harbor/logout', (req, res) => {
-  const token = req.headers['x-harbor-token'];
-  if (token) harborSessions.delete(token);
-  res.json({ ok: true });
-});
-
-// Harbor verify
-app.get('/harbor/verify', requireHarbor, (req, res) => {
-  const token = req.headers['x-harbor-token'];
-  const session = harborSessions.get(token);
-  res.json({ ok: true, name: session.name, username: session.username });
-});
-
-// Harbor get data (modules, settings)
-app.get('/harbor/data', requireHarbor, async (req, res) => {
-  try {
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_data'");
-    let data = {};
-    if (result.rows.length) {
-      try { data = JSON.parse(result.rows[0].value); } catch(e) { console.error('harbor/data parse error:', e.message); }
-    }
-    console.log('harbor/data - modules count:', data.modules ? data.modules.length : 0);
-    res.json({ ok: true, data });
-  } catch(e) {
-    console.error('harbor/data error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Harbor save modules
-app.post('/harbor/modules', requireHarbor, async (req, res) => {
-  const { modules, availableDates, timeSlots } = req.body;
-  if (!modules) return res.status(400).json({ error: 'No modules provided' });
-  try {
-    const existing = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_data'");
-    const data = existing.rows.length ? JSON.parse(existing.rows[0].value) : {};
-    data.modules = modules;
-    if (availableDates !== undefined) data.availableDates = availableDates;
-    if (timeSlots !== undefined) data.timeSlots = timeSlots;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_data', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(data)]
-    );
-    res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Harbor deploy to client
-app.post('/harbor/deploy', requireHarbor, async (req, res) => {
-  const { html } = req.body;
-  if (!html) return res.status(400).json({ error: 'No HTML provided' });
-  try {
-    await pool.query(
-      "INSERT INTO training_html (content) VALUES ($1)",
-      [html]
-    );
-    res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Harbor get requests
-app.get('/harbor/requests', requireHarbor, async (req, res) => {
-  try {
-    const type = req.query.type;
-    let query = 'SELECT * FROM requests ORDER BY created_at DESC LIMIT 100';
-    let params = [];
-    if (type && type !== 'all') {
-      query = 'SELECT * FROM requests WHERE type = $1 ORDER BY created_at DESC LIMIT 100';
-      params = [type];
-    }
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Harbor update request status
-app.patch('/harbor/requests/:id', requireHarbor, async (req, res) => {
-  const { status } = req.body;
-  try {
-    await pool.query('UPDATE requests SET status = $1 WHERE id = $2', [status, req.params.id]);
-    res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Harbor send request to developer
-app.post('/harbor/dev-request', requireHarbor, async (req, res) => {
-  const token = req.headers['x-harbor-token'];
-  const session = harborSessions.get(token);
-  const { message, type } = req.body;
-  if (!message) return res.status(400).json({ error: 'No message provided' });
-  try {
-    await pool.query(
-      'INSERT INTO requests (type, username, full_name, message) VALUES ($1, $2, $3, $4)',
-      [type || 'manager-request', session.username, session.name + ' (Manager)', message]
-    );
-    // Notify admin
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Request from ' + session.name,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Manager Request</h2><p><strong>From:</strong> ' + session.name + '</p><p><strong>Type:</strong> ' + (type || 'General') + '</p><p><strong>Message:</strong></p><pre style="font-size:13px">' + message + '</pre></div>'
-      ));
-    }
-    res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── MANAGER MANAGEMENT (admin only) ──────────────────────────────────────────
-app.get('/managers', requireKeyOrAdmin, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT id, name, username, created_at FROM managers ORDER BY created_at DESC');
-    res.json(result.rows);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/managers', requireKeyOrAdmin, async (req, res) => {
-  const { name, username, password } = req.body;
-  if (!name || !username || !password) return res.status(400).json({ error: 'All fields required' });
-  try {
-    await pool.query('INSERT INTO managers (name, username, password) VALUES ($1, $2, $3)', [name, username.toLowerCase(), password]);
-    res.json({ ok: true });
-  } catch(e) {
-    if (e.code === '23505') return res.status(400).json({ error: 'Username already taken' });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/managers/:id', requireKeyOrAdmin, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM managers WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── HARBOR DEPLOY (admin deploys harbor HTML) ─────────────────────────────────
-app.post('/admin/deploy-harbor', requireKeyOrAdmin, async (req, res) => {
-  const { html } = req.body;
-  if (!html) return res.status(400).json({ error: 'No HTML' });
-  try {
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('harbor_html', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [html]
-    );
-    res.json({ ok: true });
-  } catch(e) {
     res.status(500).json({ error: e.message });
   }
 });
@@ -923,161 +671,7 @@ app.post('/guidebook', requireKey, async (req, res) => {
   }
 });
 
-// ── PASSWORD RESET ───────────────────────────────────────────────────────────
-app.post('/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    // Find user in admin_users
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    const users = JSON.parse(result.rows[0].value);
-    const user = users.find(u => u.username === username.toLowerCase());
-    if (!user) return res.status(404).json({ error: 'Username not found' });
-
-    // Find their email from account_requests (account signup) or requests table
-    let email = null;
-    const acctResult = await pool.query(
-      'SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != \'\' ORDER BY created_at DESC LIMIT 1',
-      [username.toLowerCase()]
-    );
-    if (acctResult.rows.length) email = acctResult.rows[0].email;
-
-    if (!email) {
-      // No email on file - notify admin instead
-      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-      if (notifyEmails.length) {
-        setImmediate(() => sendEmail(
-          notifyEmails,
-          'Password Reset Request - ' + username,
-          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p>Trainee <strong>' + username + '</strong> has requested a password reset but has no email on file.</p><p>Please reset their password manually in the admin panel.</p></div>'
-        ));
-      }
-      return res.json({ ok: true, method: 'admin', message: 'A reset request has been sent to your administrator.' });
-    }
-
-    // Generate temp password
-    const tempPass = Math.random().toString(36).slice(2, 10).toUpperCase();
-    // Update password
-    user.password = tempPass;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(users)]
-    );
-
-
-    setImmediate(() => sendEmail(
-      email,
-      'TechLearn Password Reset',
-      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px"><h2 style="color:#8b5cf6">Password Reset</h2><p>Hi ' + (user.name || username) + ',</p><p>Your temporary password is:</p><div style="background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:16px;text-align:center;font-size:1.5rem;font-weight:700;font-family:monospace;letter-spacing:.1em;color:#22d3ee;margin:16px 0">' + tempPass + '</div><p>Log in at <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> and change your password after logging in.</p></div>'
-    ));
-    res.json({ ok: true, method: 'email', message: 'A temporary password has been sent to your email.' });
-  } catch(e) {
-    console.error('Reset error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── HARBOR PASSWORD RESET ─────────────────────────────────────────────────────
-app.post('/harbor/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1', [username.toLowerCase()]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Username not found' });
-    // Notify admin since managers may not have emails stored
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Password Reset Request - ' + username,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Harbor Password Reset</h2><p>Manager <strong>' + username + '</strong> has requested a password reset.</p><p>Please update their password in the admin panel under Harbor Managers.</p></div>'
-      ));
-    }
-    res.json({ ok: true, message: 'A reset request has been sent to your administrator. They will contact you shortly.' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── ACCOUNT REQUESTS// ── PASSWORD RESET ───────────────────────────────────────────────────────────
-app.post('/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    // Find user in admin_users
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    const users = JSON.parse(result.rows[0].value);
-    const user = users.find(u => u.username === username.toLowerCase());
-    if (!user) return res.status(404).json({ error: 'Username not found' });
-
-    // Find their email from account_requests (account signup) or requests table
-    let email = null;
-    const acctResult = await pool.query(
-      'SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != \'\' ORDER BY created_at DESC LIMIT 1',
-      [username.toLowerCase()]
-    );
-    if (acctResult.rows.length) email = acctResult.rows[0].email;
-
-    if (!email) {
-      // No email on file - notify admin instead
-      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-      if (notifyEmails.length) {
-        setImmediate(() => sendEmail(
-          notifyEmails,
-          'Password Reset Request - ' + username,
-          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p>Trainee <strong>' + username + '</strong> has requested a password reset but has no email on file.</p><p>Please reset their password manually in the admin panel.</p></div>'
-        ));
-      }
-      return res.json({ ok: true, method: 'admin', message: 'A reset request has been sent to your administrator.' });
-    }
-
-    // Generate temp password
-    const tempPass = Math.random().toString(36).slice(2, 10).toUpperCase();
-    // Update password
-    user.password = tempPass;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(users)]
-    );
-
-
-    setImmediate(() => sendEmail(
-      email,
-      'TechLearn Password Reset',
-      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px"><h2 style="color:#8b5cf6">Password Reset</h2><p>Hi ' + (user.name || username) + ',</p><p>Your temporary password is:</p><div style="background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:16px;text-align:center;font-size:1.5rem;font-weight:700;font-family:monospace;letter-spacing:.1em;color:#22d3ee;margin:16px 0">' + tempPass + '</div><p>Log in at <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> and change your password after logging in.</p></div>'
-    ));
-    res.json({ ok: true, method: 'email', message: 'A temporary password has been sent to your email.' });
-  } catch(e) {
-    console.error('Reset error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── HARBOR PASSWORD RESET ─────────────────────────────────────────────────────
-app.post('/harbor/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1', [username.toLowerCase()]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Username not found' });
-    // Notify admin since managers may not have emails stored
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Password Reset Request - ' + username,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Harbor Password Reset</h2><p>Manager <strong>' + username + '</strong> has requested a password reset.</p><p>Please update their password in the admin panel under Harbor Managers.</p></div>'
-      ));
-    }
-    res.json({ ok: true, message: 'A reset request has been sent to your administrator. They will contact you shortly.' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
+// ── ACCOUNT REQUESTS// ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
 app.post('/account-request', async (req, res) => {
   const { fullName, store, email, requestedUsername, requestedPassword } = req.body;
   if (!fullName || !store || !email || !requestedUsername || !requestedPassword) {
@@ -1253,83 +847,6 @@ app.delete('/changelog/:id', requireKeyOrAdmin, async (req, res) => {
   try {
     await pool.query('DELETE FROM changelog WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── PASSWORD RESET ───────────────────────────────────────────────────────────
-app.post('/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    // Find user in admin_users
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    const users = JSON.parse(result.rows[0].value);
-    const user = users.find(u => u.username === username.toLowerCase());
-    if (!user) return res.status(404).json({ error: 'Username not found' });
-
-    // Find their email from account_requests (account signup) or requests table
-    let email = null;
-    const acctResult = await pool.query(
-      'SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != \'\' ORDER BY created_at DESC LIMIT 1',
-      [username.toLowerCase()]
-    );
-    if (acctResult.rows.length) email = acctResult.rows[0].email;
-
-    if (!email) {
-      // No email on file - notify admin instead
-      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-      if (notifyEmails.length) {
-        setImmediate(() => sendEmail(
-          notifyEmails,
-          'Password Reset Request - ' + username,
-          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p>Trainee <strong>' + username + '</strong> has requested a password reset but has no email on file.</p><p>Please reset their password manually in the admin panel.</p></div>'
-        ));
-      }
-      return res.json({ ok: true, method: 'admin', message: 'A reset request has been sent to your administrator.' });
-    }
-
-    // Generate temp password
-    const tempPass = Math.random().toString(36).slice(2, 10).toUpperCase();
-    // Update password
-    user.password = tempPass;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(users)]
-    );
-
-
-    setImmediate(() => sendEmail(
-      email,
-      'TechLearn Password Reset',
-      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px"><h2 style="color:#8b5cf6">Password Reset</h2><p>Hi ' + (user.name || username) + ',</p><p>Your temporary password is:</p><div style="background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:16px;text-align:center;font-size:1.5rem;font-weight:700;font-family:monospace;letter-spacing:.1em;color:#22d3ee;margin:16px 0">' + tempPass + '</div><p>Log in at <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> and change your password after logging in.</p></div>'
-    ));
-    res.json({ ok: true, method: 'email', message: 'A temporary password has been sent to your email.' });
-  } catch(e) {
-    console.error('Reset error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── HARBOR PASSWORD RESET ─────────────────────────────────────────────────────
-app.post('/harbor/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1', [username.toLowerCase()]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Username not found' });
-    // Notify admin since managers may not have emails stored
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Password Reset Request - ' + username,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Harbor Password Reset</h2><p>Manager <strong>' + username + '</strong> has requested a password reset.</p><p>Please update their password in the admin panel under Harbor Managers.</p></div>'
-      ));
-    }
-    res.json({ ok: true, message: 'A reset request has been sent to your administrator. They will contact you shortly.' });
   } catch(e) {
     res.status(500).json({ error: e.message });
   }
