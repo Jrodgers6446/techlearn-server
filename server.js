@@ -120,6 +120,17 @@ async function initDb() {
   `).catch(() => {});
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id         SERIAL PRIMARY KEY,
+      username   TEXT NOT NULL,
+      token      TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used       BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS account_requests (
       id                SERIAL PRIMARY KEY,
       full_name         TEXT        NOT NULL DEFAULT '',
@@ -1021,158 +1032,16 @@ app.post('/guidebook', requireKey, async (req, res) => {
 });
 
 // ── PASSWORD RESET ───────────────────────────────────────────────────────────
-app.post('/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    // Find user in admin_users
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    const users = JSON.parse(result.rows[0].value);
-    const user = users.find(u => u.username === username.toLowerCase());
-    if (!user) return res.status(404).json({ error: 'Username not found' });
 
-    // Find their email from account_requests (account signup) or requests table
-    let email = null;
-    const acctResult = await pool.query(
-      'SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != \'\' ORDER BY created_at DESC LIMIT 1',
-      [username.toLowerCase()]
-    );
-    if (acctResult.rows.length) email = acctResult.rows[0].email;
-
-    if (!email) {
-      // No email on file - notify admin instead
-      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-      if (notifyEmails.length) {
-        setImmediate(() => sendEmail(
-          notifyEmails,
-          'Password Reset Request - ' + username,
-          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p>Trainee <strong>' + username + '</strong> has requested a password reset but has no email on file.</p><p>Please reset their password manually in the admin panel.</p></div>'
-        ));
-      }
-      return res.json({ ok: true, method: 'admin', message: 'A reset request has been sent to your administrator.' });
-    }
-
-    // Generate temp password
-    const tempPass = Math.random().toString(36).slice(2, 10).toUpperCase();
-    // Update password
-    user.password = tempPass;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(users)]
-    );
-
-
-    setImmediate(() => sendEmail(
-      email,
-      'TechLearn Password Reset',
-      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px"><h2 style="color:#8b5cf6">Password Reset</h2><p>Hi ' + (user.name || username) + ',</p><p>Your temporary password is:</p><div style="background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:16px;text-align:center;font-size:1.5rem;font-weight:700;font-family:monospace;letter-spacing:.1em;color:#22d3ee;margin:16px 0">' + tempPass + '</div><p>Log in at <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> and change your password after logging in.</p></div>'
-    ));
-    res.json({ ok: true, method: 'email', message: 'A temporary password has been sent to your email.' });
-  } catch(e) {
-    console.error('Reset error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ── HARBOR PASSWORD RESET ─────────────────────────────────────────────────────
-app.post('/harbor/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1', [username.toLowerCase()]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Username not found' });
-    // Notify admin since managers may not have emails stored
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Password Reset Request - ' + username,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Harbor Password Reset</h2><p>Manager <strong>' + username + '</strong> has requested a password reset.</p><p>Please update their password in the admin panel under Harbor Managers.</p></div>'
-      ));
-    }
-    res.json({ ok: true, message: 'A reset request has been sent to your administrator. They will contact you shortly.' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+
 
 // ── ACCOUNT REQUESTS// ── PASSWORD RESET ───────────────────────────────────────────────────────────
-app.post('/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    // Find user in admin_users
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    const users = JSON.parse(result.rows[0].value);
-    const user = users.find(u => u.username === username.toLowerCase());
-    if (!user) return res.status(404).json({ error: 'Username not found' });
 
-    // Find their email from account_requests (account signup) or requests table
-    let email = null;
-    const acctResult = await pool.query(
-      'SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != \'\' ORDER BY created_at DESC LIMIT 1',
-      [username.toLowerCase()]
-    );
-    if (acctResult.rows.length) email = acctResult.rows[0].email;
-
-    if (!email) {
-      // No email on file - notify admin instead
-      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-      if (notifyEmails.length) {
-        setImmediate(() => sendEmail(
-          notifyEmails,
-          'Password Reset Request - ' + username,
-          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p>Trainee <strong>' + username + '</strong> has requested a password reset but has no email on file.</p><p>Please reset their password manually in the admin panel.</p></div>'
-        ));
-      }
-      return res.json({ ok: true, method: 'admin', message: 'A reset request has been sent to your administrator.' });
-    }
-
-    // Generate temp password
-    const tempPass = Math.random().toString(36).slice(2, 10).toUpperCase();
-    // Update password
-    user.password = tempPass;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(users)]
-    );
-
-
-    setImmediate(() => sendEmail(
-      email,
-      'TechLearn Password Reset',
-      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px"><h2 style="color:#8b5cf6">Password Reset</h2><p>Hi ' + (user.name || username) + ',</p><p>Your temporary password is:</p><div style="background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:16px;text-align:center;font-size:1.5rem;font-weight:700;font-family:monospace;letter-spacing:.1em;color:#22d3ee;margin:16px 0">' + tempPass + '</div><p>Log in at <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> and change your password after logging in.</p></div>'
-    ));
-    res.json({ ok: true, method: 'email', message: 'A temporary password has been sent to your email.' });
-  } catch(e) {
-    console.error('Reset error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ── HARBOR PASSWORD RESET ─────────────────────────────────────────────────────
-app.post('/harbor/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1', [username.toLowerCase()]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Username not found' });
-    // Notify admin since managers may not have emails stored
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Password Reset Request - ' + username,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Harbor Password Reset</h2><p>Manager <strong>' + username + '</strong> has requested a password reset.</p><p>Please update their password in the admin panel under Harbor Managers.</p></div>'
-      ));
-    }
-    res.json({ ok: true, message: 'A reset request has been sent to your administrator. They will contact you shortly.' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+
 
 // ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
 app.post('/account-request', async (req, res) => {
@@ -1398,81 +1267,10 @@ app.delete('/changelog/:id', requireKeyOrHarbor, async (req, res) => {
 });
 
 // ── PASSWORD RESET ───────────────────────────────────────────────────────────
-app.post('/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    // Find user in admin_users
-    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    const users = JSON.parse(result.rows[0].value);
-    const user = users.find(u => u.username === username.toLowerCase());
-    if (!user) return res.status(404).json({ error: 'Username not found' });
 
-    // Find their email from account_requests (account signup) or requests table
-    let email = null;
-    const acctResult = await pool.query(
-      'SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != \'\' ORDER BY created_at DESC LIMIT 1',
-      [username.toLowerCase()]
-    );
-    if (acctResult.rows.length) email = acctResult.rows[0].email;
-
-    if (!email) {
-      // No email on file - notify admin instead
-      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-      if (notifyEmails.length) {
-        setImmediate(() => sendEmail(
-          notifyEmails,
-          'Password Reset Request - ' + username,
-          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p>Trainee <strong>' + username + '</strong> has requested a password reset but has no email on file.</p><p>Please reset their password manually in the admin panel.</p></div>'
-        ));
-      }
-      return res.json({ ok: true, method: 'admin', message: 'A reset request has been sent to your administrator.' });
-    }
-
-    // Generate temp password
-    const tempPass = Math.random().toString(36).slice(2, 10).toUpperCase();
-    // Update password
-    user.password = tempPass;
-    await pool.query(
-      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
-      [JSON.stringify(users)]
-    );
-
-
-    setImmediate(() => sendEmail(
-      email,
-      'TechLearn Password Reset',
-      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px"><h2 style="color:#8b5cf6">Password Reset</h2><p>Hi ' + (user.name || username) + ',</p><p>Your temporary password is:</p><div style="background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:16px;text-align:center;font-size:1.5rem;font-weight:700;font-family:monospace;letter-spacing:.1em;color:#22d3ee;margin:16px 0">' + tempPass + '</div><p>Log in at <a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">techlearn-lupa.com</a> and change your password after logging in.</p></div>'
-    ));
-    res.json({ ok: true, method: 'email', message: 'A temporary password has been sent to your email.' });
-  } catch(e) {
-    console.error('Reset error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
 
 // ── HARBOR PASSWORD RESET ─────────────────────────────────────────────────────
-app.post('/harbor/reset-password', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Username required' });
-  try {
-    const result = await pool.query('SELECT * FROM managers WHERE username = $1', [username.toLowerCase()]);
-    if (!result.rows.length) return res.status(404).json({ error: 'Username not found' });
-    // Notify admin since managers may not have emails stored
-    const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
-    if (notifyEmails.length) {
-      setImmediate(() => sendEmail(
-        notifyEmails,
-        'Harbor Password Reset Request - ' + username,
-        '<div style="font-family:sans-serif;padding:24px"><h2>Harbor Password Reset</h2><p>Manager <strong>' + username + '</strong> has requested a password reset.</p><p>Please update their password in the admin panel under Harbor Managers.</p></div>'
-      ));
-    }
-    res.json({ ok: true, message: 'A reset request has been sent to your administrator. They will contact you shortly.' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+
 
 // ── ACCOUNT REQUESTS ─────────────────────────────────────────────────────────
 app.post('/account-request', async (req, res) => {
@@ -1771,6 +1569,110 @@ app.get('/preview', async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(result.rows[0].content);
   } catch(e) { res.status(500).send('Error'); }
+});
+
+
+// ── PASSWORD RESET ───────────────────────────────────────────────────────────
+app.post('/reset-password', async (req, res) => {
+  const { username } = req.body;
+  if (!username) return res.status(400).json({ error: 'Username required' });
+  try {
+    const result = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    const users = JSON.parse(result.rows[0].value);
+    const user = users.find(u => u.username === username.toLowerCase());
+    if (!user) return res.status(404).json({ error: 'Username not found' });
+
+    // Find email
+    const acctResult = await pool.query(
+      "SELECT email FROM account_requests WHERE requested_username = $1 AND email IS NOT NULL AND email != '' ORDER BY created_at DESC LIMIT 1",
+      [username.toLowerCase()]
+    );
+
+    if (!acctResult.rows.length || !acctResult.rows[0].email) {
+      const notifyEmails = (process.env.NOTIFY_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+      if (notifyEmails.length) {
+        setImmediate(() => sendEmail(notifyEmails, 'Password Reset Request - ' + username,
+          '<div style="font-family:sans-serif;padding:24px"><h2>Password Reset Request</h2><p><strong>' + username + '</strong> requested a password reset but has no email on file. Please reset their password manually.</p></div>'
+        ));
+      }
+      return res.json({ ok: true, message: 'A reset request has been sent to your administrator.' });
+    }
+
+    const email = acctResult.rows[0].email;
+    const token = require('crypto').randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await pool.query(
+      'INSERT INTO password_resets (username, token, expires_at) VALUES ($1, $2, $3)',
+      [username.toLowerCase(), token, expires]
+    );
+
+    const resetLink = 'https://www.techlearn-lupa.com/reset?token=' + token;
+    setImmediate(() => sendEmail(email, 'TechLearn Password Reset',
+      '<div style="font-family:sans-serif;max-width:480px;padding:24px;background:#0d0e14;color:#e8e9f0;border-radius:12px">' +
+      '<h2 style="color:#8b5cf6">Password Reset</h2>' +
+      '<p>Hi ' + (user.name || username) + ',</p>' +
+      '<p>Click the button below to reset your password. This link expires in 1 hour.</p>' +
+      '<a href="' + resetLink + '" style="display:inline-block;margin:16px 0;background:#8b5cf6;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">Reset Password</a>' +
+      '<p style="font-size:12px;color:#7c7d8a">If you did not request this, ignore this email.</p></div>'
+    ));
+
+    res.json({ ok: true, message: 'A password reset link has been sent to your email.' });
+  } catch(e) {
+    console.error('Reset error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reset password page
+app.get('/reset', async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).send('<h2>Invalid reset link.</h2>');
+  try {
+    const result = await pool.query(
+      'SELECT * FROM password_resets WHERE token = $1 AND used = FALSE AND expires_at > NOW()',
+      [token]
+    );
+    if (!result.rows.length) {
+      return res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>TechLearn Reset</title><style>body{font-family:sans-serif;background:#0d0e14;color:#e8e9f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}.card{background:#13141c;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:2rem;max-width:400px;width:90%;text-align:center}h2{color:#f87171}</style></head><body><div class="card"><h2>Link Expired</h2><p>This reset link has expired or already been used.</p><a href="https://www.techlearn-lupa.com" style="color:#8b5cf6">Back to login</a></div></body></html>');
+    }
+    const username = result.rows[0].username;
+    res.send('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Reset Password</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:sans-serif;background:#0d0e14;color:#e8e9f0;display:flex;align-items:center;justify-content:center;min-height:100vh}.card{background:#13141c;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:2rem;max-width:400px;width:90%}h2{color:#8b5cf6;margin-bottom:.5rem}p{color:#7c7d8a;font-size:14px;margin-bottom:1.5rem}input{width:100%;background:#1a1b26;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:.75rem 1rem;color:#e8e9f0;font-size:14px;margin-bottom:1rem;outline:none}input:focus{border-color:#8b5cf6}button{width:100%;background:#8b5cf6;color:#fff;border:none;border-radius:8px;padding:.75rem;font-size:14px;font-weight:600;cursor:pointer}.msg{margin-top:1rem;font-size:13px;text-align:center}</style></head><body><div class="card"><h2>Reset Password</h2><p>Enter your new password below.</p><input type="password" id="pw" placeholder="New password"><input type="password" id="pw2" placeholder="Confirm password"><button onclick="doReset()">Set New Password</button><div class="msg" id="msg"></div></div><script>function doReset(){var pw=document.getElementById("pw").value;var pw2=document.getElementById("pw2").value;var msg=document.getElementById("msg");if(!pw||pw.length<6){msg.style.color="#f87171";msg.textContent="Password must be at least 6 characters.";return;}if(pw!==pw2){msg.style.color="#f87171";msg.textContent="Passwords do not match.";return;}fetch("/reset",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:"' + token + '",password:pw})}).then(function(r){return r.json();}).then(function(d){if(d.ok){msg.style.color="#4ade80";msg.textContent="Password updated! Redirecting...";setTimeout(function(){window.location="https://www.techlearn-lupa.com";},2000);}else{msg.style.color="#f87171";msg.textContent=d.error||"Failed.";}}).catch(function(){msg.style.color="#f87171";msg.textContent="Could not connect.";});}</script></body></html>');
+  } catch(e) {
+    res.status(500).send('Error');
+  }
+});
+
+app.post('/reset', async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: 'Missing fields' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password too short' });
+  try {
+    const result = await pool.query(
+      'SELECT * FROM password_resets WHERE token = $1 AND used = FALSE AND expires_at > NOW()',
+      [token]
+    );
+    if (!result.rows.length) return res.status(400).json({ error: 'Invalid or expired link' });
+    const username = result.rows[0].username;
+
+    // Update password
+    const usersResult = await pool.query("SELECT value FROM admin_data WHERE key = 'admin_users'");
+    const users = JSON.parse(usersResult.rows[0].value);
+    const user = users.find(u => u.username === username);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    user.password = password;
+    await pool.query(
+      "INSERT INTO admin_data (key, value) VALUES ('admin_users', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+      [JSON.stringify(users)]
+    );
+
+    // Mark token as used
+    await pool.query('UPDATE password_resets SET used = TRUE WHERE token = $1', [token]);
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 
