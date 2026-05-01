@@ -1675,7 +1675,33 @@ app.post('/reset', async (req, res) => {
   }
 });
 
+// ── PWA ───────────────────────────────────────────────────────────────────────
+app.get('/manifest.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    name: 'TechLearn', short_name: 'TechLearn',
+    description: 'Remote Technician Training by Lupaservices LLC',
+    start_url: '/', display: 'standalone', orientation: 'portrait',
+    background_color: '#0d0e14', theme_color: '#8b5cf6',
+    icons: [
+      { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+      { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
+    ]
+  });
+});
 
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript');
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.send(`const CACHE='techlearn-v1';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.add('/')).then(()=>self.skipWaiting()));});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(['/result','/progress','/request','/admin','/reset'].some(p=>u.pathname.startsWith(p)))return;e.respondWith(fetch(e.request).then(r=>{if(r.ok){const c=r.clone();caches.open(CACHE).then(ca=>ca.put(e.request,c));}return r;}).catch(()=>caches.match(e.request).then(r=>r||caches.match('/'))));});`);
+});
+
+const ICON_SVG = (s) => `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}"><rect width="${s}" height="${s}" rx="${Math.round(s*0.2)}" fill="#0d0e14"/><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#22d3ee"/></linearGradient></defs><rect width="${s}" height="${s}" rx="${Math.round(s*0.2)}" fill="url(#g)" opacity="0.15"/><text x="50%" y="55%" font-size="${Math.round(s*0.55)}" text-anchor="middle" dominant-baseline="middle">🔧</text></svg>`;
+app.get('/icon-192.png', (req, res) => { res.setHeader('Content-Type','image/svg+xml'); res.send(ICON_SVG(192)); });
+app.get('/icon-512.png', (req, res) => { res.setHeader('Content-Type','image/svg+xml'); res.send(ICON_SVG(512)); });
 // ── START ─────────────────────────────────────────────────────────────────────
 initDb()
   .then(() => {
