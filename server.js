@@ -1702,7 +1702,6 @@ self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new
 const ICON_SVG = (s) => `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}"><rect width="${s}" height="${s}" rx="${Math.round(s*0.2)}" fill="#0d0e14"/><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#22d3ee"/></linearGradient></defs><rect width="${s}" height="${s}" rx="${Math.round(s*0.2)}" fill="url(#g)" opacity="0.15"/><text x="50%" y="55%" font-size="${Math.round(s*0.55)}" text-anchor="middle" dominant-baseline="middle">🔧</text></svg>`;
 app.get('/icon-192.png', (req, res) => { res.setHeader('Content-Type','image/svg+xml'); res.send(ICON_SVG(192)); });
 app.get('/icon-512.png', (req, res) => { res.setHeader('Content-Type','image/svg+xml'); res.send(ICON_SVG(512)); });
-// ── START ─────────────────────────────────────────────────────────────────────
 // ── MANAGER PORTAL ────────────────────────────────────────────────────────────
 app.get('/manager', async (req, res) => {
   try {
@@ -1727,6 +1726,8 @@ app.post('/manager/deploy', async (req, res) => {
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+// ── START ─────────────────────────────────────────────────────────────────────
 
 initDb()
   .then(() => {
