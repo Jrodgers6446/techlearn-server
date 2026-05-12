@@ -1703,6 +1703,31 @@ const ICON_SVG = (s) => `<svg xmlns="http://www.w3.org/2000/svg" width="${s}" he
 app.get('/icon-192.png', (req, res) => { res.setHeader('Content-Type','image/svg+xml'); res.send(ICON_SVG(192)); });
 app.get('/icon-512.png', (req, res) => { res.setHeader('Content-Type','image/svg+xml'); res.send(ICON_SVG(512)); });
 // ── START ─────────────────────────────────────────────────────────────────────
+// ── MANAGER PORTAL ────────────────────────────────────────────────────────────
+app.get('/manager', async (req, res) => {
+  try {
+    const r = await pool.query("SELECT value FROM admin_data WHERE key = 'manager_html'");
+    if (r.rows.length) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(JSON.parse(r.rows[0].value));
+    }
+  } catch(e) {}
+  res.send('<h2 style="font-family:sans-serif;padding:2rem;background:#0d0e14;color:#e8e9f0">Deploy manager portal first.</h2>');
+});
+
+app.post('/manager/deploy', async (req, res) => {
+  const key = req.headers['x-api-key'];
+  const tok = req.headers['x-admin-token'];
+  if (!(key && key === process.env.API_KEY || tok && sessions.has(tok)))
+    return res.status(401).json({ error: 'Unauthorized' });
+  const { html } = req.body;
+  if (!html) return res.status(400).json({ error: 'No HTML' });
+  try {
+    await pool.query("INSERT INTO admin_data (key, value) VALUES ('manager_html', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()", [JSON.stringify(html)]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 initDb()
   .then(() => {
     app.listen(PORT, () => {
