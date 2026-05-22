@@ -1708,7 +1708,6 @@ app.get('/manager', async (req, res) => {
     const r = await pool.query("SELECT value FROM admin_data WHERE key = 'manager_html'");
     if (r.rows.length && r.rows[0].value) {
       let content = r.rows[0].value;
-      // Handle both single and double JSON encoding
       try { content = JSON.parse(content); } catch(e) {}
       if (typeof content === 'string' && content.startsWith('"')) {
         try { content = JSON.parse(content); } catch(e) {}
