@@ -1706,25 +1706,20 @@ app.get('/icon-512.png', (req, res) => { res.setHeader('Content-Type','image/svg
 app.get('/manager', async (req, res) => {
   try {
     const r = await pool.query("SELECT value FROM admin_data WHERE key = 'manager_html'");
-    if (r.rows.length) {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.send(JSON.parse(r.rows[0].value));
+    if (r.rows.length && r.rows[0].value) {
+      let content = r.rows[0].value;
+      // Handle both single and double JSON encoding
+      try { content = JSON.parse(content); } catch(e) {}
+      if (typeof content === 'string' && content.startsWith('"')) {
+        try { content = JSON.parse(content); } catch(e) {}
+      }
+      if (content && content.length > 100) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(content);
+      }
     }
-  } catch(e) {}
+  } catch(e) { console.error('Manager route error:', e.message); }
   res.send('<h2 style="font-family:sans-serif;padding:2rem;background:#0d0e14;color:#e8e9f0">Deploy manager portal first.</h2>');
-});
-
-app.post('/manager/deploy', async (req, res) => {
-  const key = req.headers['x-api-key'];
-  const tok = req.headers['x-admin-token'];
-  if (!(key && key === process.env.API_KEY || tok && sessions.has(tok)))
-    return res.status(401).json({ error: 'Unauthorized' });
-  const { html } = req.body;
-  if (!html) return res.status(400).json({ error: 'No HTML' });
-  try {
-    await pool.query("INSERT INTO admin_data (key, value) VALUES ('manager_html', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()", [JSON.stringify(html)]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
